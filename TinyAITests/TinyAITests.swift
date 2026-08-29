@@ -10,7 +10,141 @@ import Foundation
 import AppKit
 @testable import TinyAI
 
+private final class CountingKeychainClient: KeychainClient {
+    var forcedResults: [String: KeychainReadResult] = [:]
+    var queuedResults: [String: [KeychainReadResult]] = [:]
+    var readCalls = 0
+    var saveCalls = 0
+    var deleteCalls = 0
+    var interactionFlags: [Bool] = []
+    var saveSucceeds = true
+    var deleteSucceeds = true
+
+    func readString(service: String, account: String, allowInteraction: Bool) -> KeychainReadResult {
+        readCalls += 1
+        interactionFlags.append(allowInteraction)
+        if var queued = queuedResults[account], !queued.isEmpty {
+            let result = queued.removeFirst()
+            queuedResults[account] = queued
+            return result
+        }
+        return forcedResults[account] ?? .missing
+    }
+
+    func saveString(_ value: String, service: String, account: String, allowInteraction: Bool) -> Bool {
+        saveCalls += 1
+        interactionFlags.append(allowInteraction)
+        return saveSucceeds
+    }
+
+    func delete(service: String, account: String, allowInteraction: Bool) -> Bool {
+        deleteCalls += 1
+        interactionFlags.append(allowInteraction)
+        return deleteSucceeds
+    }
+}
+
 struct TinyAITests {
+
+    @Test func permissionRequestPlan_doesNotRepeatWithinOneProcess() {
+        let first = TinyAIPermissions.requestablePermissions(
+            accessibilityGranted: false,
+            inputMonitoringGranted: false,
+            requested: []
+        )
+        #expect(first == [.accessibility, .inputMonitoring])
+
+        let afterRequest = TinyAIPermissions.requestablePermissions(
+            accessibilityGranted: false,
+            inputMonitoringGranted: false,
+            requested: Set(first)
+        )
+        #expect(afterRequest.isEmpty)
+
+        #expect(TinyAIPermissions.requestablePermissions(
+            accessibilityGranted: true,
+            inputMonitoringGranted: true,
+            requested: []
+        ).isEmpty)
+    }
+
+    @Test func keyboardMonitor_retriesOnlyAfterPermissionStateChanges() {
+        #expect(!KeyboardMonitor.shouldRetryEventTap(permissionStateChanged: false, setupAlreadyAttempted: true))
+        #expect(!KeyboardMonitor.shouldRetryEventTap(permissionStateChanged: false, setupAlreadyAttempted: false))
+        #expect(KeyboardMonitor.shouldRetryEventTap(permissionStateChanged: true, setupAlreadyAttempted: true))
+        #expect(!KeyboardMonitor.shouldRetryEventTap(permissionStateChanged: true, setupAlreadyAttempted: false))
+    }
+
+    @Test func cachingKeychainClient_reusesNonInteractiveStartupRead() {
+        let base = CountingKeychainClient()
+        base.forcedResults["OpenAIAPIKey"] = .interactionRequired
+        let client = CachingKeychainClient(base: base)
+
+        #expect(client.readString(service: "IT.TinyAI", account: "OpenAIAPIKey", allowInteraction: false) == .interactionRequired)
+        #expect(client.readString(service: "IT.TinyAI", account: "OpenAIAPIKey", allowInteraction: false) == .interactionRequired)
+        #expect(base.readCalls == 1)
+        #expect(base.interactionFlags == [false])
+    }
+
+    @Test func cachingKeychainClient_explicitRetryRechecksCachedMiss() {
+        let base = CountingKeychainClient()
+        base.forcedResults["OpenAIAPIKey"] = .missing
+        let client = CachingKeychainClient(base: base)
+
+        #expect(client.readString(service: "IT.TinyAI", account: "OpenAIAPIKey", allowInteraction: false) == .missing)
+        base.forcedResults["OpenAIAPIKey"] = .value("recovered-key")
+        #expect(client.readString(service: "IT.TinyAI", account: "OpenAIAPIKey", allowInteraction: true) == .value("recovered-key"))
+        #expect(base.readCalls == 2)
+        #expect(base.interactionFlags == [false, true])
+    }
+
+    @Test @MainActor func translationService_startupDoesNotWriteKeychain() {
+        let defaultsName = "IT.TinyAI.Tests.StartupRead.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: defaultsName)!
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+
+        let keychain = CountingKeychainClient()
+        keychain.forcedResults["OpenAIAPIKey"] = .value("openai-key")
+        keychain.forcedResults["GeminiAPIKey"] = .value("gemini-key")
+        let service = TranslationService(keychainClient: keychain, defaults: defaults)
+
+        #expect(service.apiKey == "openai-key")
+        #expect(service.geminiAPIKey == "gemini-key")
+        #expect(keychain.saveCalls == 0)
+        #expect(keychain.deleteCalls == 0)
+        #expect(keychain.interactionFlags == [false, false])
+    }
+
+    @Test @MainActor func translationService_explicitSaveIsTheInteractiveWrite() {
+        let defaultsName = "IT.TinyAI.Tests.ExplicitSave.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: defaultsName)!
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+
+        let keychain = CountingKeychainClient()
+        let service = TranslationService(keychainClient: keychain, defaults: defaults)
+        service.saveAPIKey("new-openai-key", for: .openAI)
+
+        #expect(keychain.saveCalls == 1)
+        #expect(keychain.interactionFlags.last == true)
+        #expect(service.apiKey == "new-openai-key")
+    }
+
+    @Test @MainActor func translationService_retryUsesInteractiveReadOnlyAfterStartupMiss() {
+        let defaultsName = "IT.TinyAI.Tests.RetryRead.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: defaultsName)!
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+
+        let keychain = CountingKeychainClient()
+        keychain.queuedResults["OpenAIAPIKey"] = [.interactionRequired, .value("recovered-key")]
+        let service = TranslationService(keychainClient: keychain, defaults: defaults)
+
+        #expect(service.keychainStatus(for: .openAI) == .interactionRequired)
+        #expect(service.retryKeychainAccess(for: .openAI) == .value("recovered-key"))
+        #expect(service.apiKey == "recovered-key")
+        #expect(keychain.interactionFlags == [false, false, true])
+        #expect(keychain.saveCalls == 0)
+        #expect(keychain.deleteCalls == 0)
+    }
 
     @Test @MainActor func ax_fullscreen_detection_does_not_crash() {
         let delegate = AppDelegate()

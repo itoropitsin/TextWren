@@ -118,13 +118,14 @@ class KeyboardMonitor: ObservableObject {
     private let pasteboardPollInterval: TimeInterval = 0.01
     private let pasteboardCopyTimeout: TimeInterval = 1.0
     private let pasteboardStabilityWindow: TimeInterval = 0.10
+    private(set) var globalMonitoringEnabled: Bool
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var eventTapSetupAttempted = false
+    private var lastPermissionState: Bool
     private var isProcessing: Bool = false // Protection against multiple triggers
     private var isProcessingCustomAction: Bool = false
     private var isSimulatingCopy: Bool = false
-    private var setupRetryCount: Int = 0
-    private let setupRetryLimit: Int = 10
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TinyAI", category: "KeyboardMonitor")
 
     private let popupHotkeyKeyCodeDefaultsKey = "PopupHotkeyKeyCodeV1"
@@ -139,8 +140,15 @@ class KeyboardMonitor: ObservableObject {
         23: 5  // 5
     ]
     
-    init() {
-        let defaults = UserDefaults.standard
+    init(globalMonitoringEnabled: Bool? = nil) {
+        if let globalMonitoringEnabled {
+            self.globalMonitoringEnabled = globalMonitoringEnabled && !TinyAIRuntime.isTestEnvironment
+        } else {
+            self.globalMonitoringEnabled = !TinyAIRuntime.isTestEnvironment && TinyAIPermissions.allGranted
+        }
+        self.lastPermissionState = self.globalMonitoringEnabled
+
+        let defaults = TinyAIRuntime.userDefaults
         let savedKeyCode = defaults.object(forKey: popupHotkeyKeyCodeDefaultsKey) as? Int64
         let savedModifiers = defaults.object(forKey: popupHotkeyModifiersDefaultsKey) as? Int
         let savedPressModeRaw = defaults.string(forKey: popupHotkeyPressModeDefaultsKey)
@@ -160,7 +168,9 @@ class KeyboardMonitor: ObservableObject {
             defaults.set(popupHotkeyPressMode.rawValue, forKey: popupHotkeyPressModeDefaultsKey)
         }
 
-        setupGlobalHotkey()
+        if self.globalMonitoringEnabled {
+            setupGlobalHotkey()
+        }
     }
     
     deinit {
@@ -244,6 +254,40 @@ class KeyboardMonitor: ObservableObject {
         return best
     }
 
+    var isGlobalMonitoringEnabled: Bool {
+        globalMonitoringEnabled
+    }
+
+    static func shouldRetryEventTap(permissionStateChanged: Bool, setupAlreadyAttempted: Bool) -> Bool {
+        permissionStateChanged && setupAlreadyAttempted
+    }
+
+    /// Start the event tap only after both system permissions are granted.
+    /// There is intentionally no timer-based retry: a failed tap must not
+    /// produce a chain of macOS permission prompts.
+    @discardableResult
+    func startMonitoringIfPermitted() -> Bool {
+        let permissionsGranted = TinyAIPermissions.allGranted
+        guard !TinyAIRuntime.isTestEnvironment, permissionsGranted else {
+            globalMonitoringEnabled = false
+            lastPermissionState = false
+            return false
+        }
+
+        let permissionStateChanged = !lastPermissionState
+        if Self.shouldRetryEventTap(
+            permissionStateChanged: permissionStateChanged,
+            setupAlreadyAttempted: eventTapSetupAttempted
+        ) {
+            eventTapSetupAttempted = false
+        }
+        lastPermissionState = true
+        globalMonitoringEnabled = true
+        guard !eventTapSetupAttempted else { return eventTap != nil }
+        setupGlobalHotkey()
+        return eventTap != nil
+    }
+
     static func richPayloadScore(_ payload: RichTextPayload) -> Int {
         let prepared = RichTextConverter.prepare(payload: payload)
         let signature = RichTextConverter.structureSignature(of: prepared.attributed)
@@ -263,7 +307,7 @@ class KeyboardMonitor: ObservableObject {
         popupHotkeyPressMode = pressMode
         clearPendingDoublePressState()
 
-        let defaults = UserDefaults.standard
+        let defaults = TinyAIRuntime.userDefaults
         defaults.set(shortcut.keyCode, forKey: popupHotkeyKeyCodeDefaultsKey)
         defaults.set(shortcut.modifiers.rawValue, forKey: popupHotkeyModifiersDefaultsKey)
         defaults.set(pressMode.rawValue, forKey: popupHotkeyPressModeDefaultsKey)
@@ -271,6 +315,9 @@ class KeyboardMonitor: ObservableObject {
     }
 
     private func setupGlobalHotkey() {
+        guard globalMonitoringEnabled, eventTap == nil, !eventTapSetupAttempted else { return }
+        eventTapSetupAttempted = true
+
         let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
         
         eventTap = CGEvent.tapCreate(
@@ -287,14 +334,13 @@ class KeyboardMonitor: ObservableObject {
         
         guard let eventTap = eventTap else {
             logger.error("Failed to create event tap")
-            scheduleSetupRetryIfNeeded()
             return
         }
-
-        setupRetryCount = 0
         
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
         guard let runLoopSource = runLoopSource else {
+            CFMachPortInvalidate(eventTap)
+            self.eventTap = nil
             return
         }
         
@@ -302,22 +348,11 @@ class KeyboardMonitor: ObservableObject {
         CGEvent.tapEnable(tap: eventTap, enable: true)
     }
 
-    private func scheduleSetupRetryIfNeeded() {
-        guard setupRetryCount < setupRetryLimit else {
-            return
+    private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        guard globalMonitoringEnabled else {
+            return Unmanaged.passUnretained(event)
         }
 
-        setupRetryCount += 1
-        let delay = min(5.0, 0.5 + (Double(setupRetryCount) * 0.5))
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self else { return }
-            if self.eventTap == nil {
-                self.setupGlobalHotkey()
-            }
-        }
-    }
-    
-    private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
@@ -1034,6 +1069,7 @@ class KeyboardMonitor: ObservableObject {
     }
     
     func stopMonitoring() {
+        globalMonitoringEnabled = false
         if let runLoopSource = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         }

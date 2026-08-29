@@ -236,6 +236,13 @@ struct SettingsView: View {
         let isBusy = busyProviders.contains(provider)
         let hasDraftKey = !key.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasSavedKey = translationService.hasAPIKey(for: provider)
+        let keychainStatus = translationService.keychainStatus(for: provider)
+        let needsKeychainRetry: Bool = {
+            guard let keychainStatus else { return false }
+            if case .interactionRequired = keychainStatus { return true }
+            if case .failure = keychainStatus { return true }
+            return false
+        }()
         let statusColor: Color = hasDraftKey ? .green : .red
 
         return VStack(alignment: .leading, spacing: 8) {
@@ -270,6 +277,29 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isBusy || !hasDraftKey)
+            }
+
+            if needsKeychainRetry {
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.trianglebadge.exclamationmark")
+                        .foregroundColor(.orange)
+                    Text("Keychain access needs your confirmation.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Button("Retry") {
+                        let result = translationService.retryKeychainAccess(for: provider)
+                        switch result {
+                        case .value(let value):
+                            key.wrappedValue = value
+                            validatedKeyCandidates[provider] = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        case .missing:
+                            apiAlert = APIAlert(title: "Key not found", message: "No saved \(provider.displayName) key was found in Keychain.")
+                        case .interactionRequired, .failure:
+                            apiAlert = APIAlert(title: "Keychain access unavailable", message: "Allow access to the TinyAI Keychain item, then try again.")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
         .padding(.vertical, 6)
@@ -614,6 +644,7 @@ struct SettingsView: View {
                         }
                         .frame(width: settingsControlColumnWidth, alignment: .leading)
                     }
+
                 }
             }
             .padding(.horizontal)

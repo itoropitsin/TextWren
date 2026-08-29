@@ -1,7 +1,117 @@
 import SwiftUI
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import os
+
+enum TinyAIRuntime {
+    private static let testDefaultsSuite = "IT.TinyAI.TestRuntime"
+
+    static var isTestEnvironment: Bool {
+        isTestEnvironment(arguments: ProcessInfo.processInfo.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
+    static var userDefaults: UserDefaults {
+        guard isTestEnvironment else { return .standard }
+        return UserDefaults(suiteName: testDefaultsSuite) ?? .standard
+    }
+
+    static func isTestEnvironment(arguments: [String], environment: [String: String]) -> Bool {
+        if arguments.contains("--ui-testing") || environment["TINYAI_TEST_MODE"] == "1" {
+            return true
+        }
+        if environment["XCInjectBundleInto"] != nil || environment["XCTestConfigurationFilePath"] != nil {
+            return true
+        }
+        return environment.keys.contains { $0.hasPrefix("XCTest") }
+    }
+}
+
+/// Permission requests are deliberately limited to one attempt per missing
+/// permission during a process lifetime.  A new process may ask again when
+/// access is still genuinely missing, while an update with preserved TCC
+/// state does not ask at all.
+enum TinyAIPermissions {
+    enum Permission: String, CaseIterable, Identifiable {
+        case accessibility
+        case inputMonitoring
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .accessibility: return "Accessibility"
+            case .inputMonitoring: return "Input Monitoring"
+            }
+        }
+    }
+
+    private static var requestedThisProcess: Set<Permission> = []
+
+    static var accessibilityGranted: Bool {
+        AXIsProcessTrusted()
+    }
+
+    static var inputMonitoringGranted: Bool {
+        if #available(macOS 10.15, *) {
+            return CGPreflightListenEventAccess()
+        }
+        return true
+    }
+
+    static var allGranted: Bool {
+        accessibilityGranted && inputMonitoringGranted
+    }
+
+    static func isGranted(_ permission: Permission) -> Bool {
+        switch permission {
+        case .accessibility: return accessibilityGranted
+        case .inputMonitoring: return inputMonitoringGranted
+        }
+    }
+
+    static func requestablePermissions(
+        accessibilityGranted: Bool,
+        inputMonitoringGranted: Bool,
+        requested: Set<Permission>
+    ) -> [Permission] {
+        Permission.allCases.filter { permission in
+            let granted: Bool
+            switch permission {
+            case .accessibility: granted = accessibilityGranted
+            case .inputMonitoring: granted = inputMonitoringGranted
+            }
+            return !granted && !requested.contains(permission)
+        }
+    }
+
+    @discardableResult
+    static func requestMissing() -> Bool {
+        guard !TinyAIRuntime.isTestEnvironment else { return allGranted }
+
+        let requestable = requestablePermissions(
+            accessibilityGranted: accessibilityGranted,
+            inputMonitoringGranted: inputMonitoringGranted,
+            requested: requestedThisProcess
+        )
+        if requestable.contains(.accessibility) {
+            requestedThisProcess.insert(.accessibility)
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+            _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        }
+        if #available(macOS 10.15, *), requestable.contains(.inputMonitoring) {
+            requestedThisProcess.insert(.inputMonitoring)
+            _ = CGRequestListenEventAccess()
+        }
+        return allGranted
+    }
+
+    #if DEBUG
+    static func resetRequestStateForTesting() {
+        requestedThisProcess.removeAll()
+    }
+    #endif
+}
 
 @main
 struct TinyAIApp: App {
@@ -20,6 +130,7 @@ struct TinyAIApp: App {
                     keyboardMonitor.onPopupHotkey = { [weak appDelegate] payload in
                         appDelegate?.showTranslationPopup(with: payload)
                     }
+                    appDelegate.startKeyboardMonitoringIfPermitted()
                 }
         }
         .windowStyle(.automatic)
@@ -102,7 +213,9 @@ extension View {
     }
 }
 
-private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+// Keep this subclass concrete. A generic NSHostingView subclass can trigger a
+// Swift optimizer crash while synthesising its deinit.
+private final class FirstMouseHostingView: NSHostingView<AnyView> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
@@ -111,6 +224,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     weak var translationService: TranslationService?
     var keyboardMonitor: KeyboardMonitor?
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TinyAI", category: "AppDelegate")
+    private var permissionObserver: NSObjectProtocol?
 
     func isFrontmostWindowFullscreen() -> Bool {
         let systemWideElement = AXUIElementCreateSystemWide()
@@ -155,18 +269,45 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Keep the app in the Dock so the main window is visible
         // NSApp.setActivationPolicy(.accessory)
-        
-        // Request Accessibility permission
-        requestAccessibilityPermission()
-    }
-    
-    func requestAccessibilityPermission() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        let accessEnabled = AXIsProcessTrustedWithOptions(options as CFDictionary)
-        
-        if !accessEnabled {
-            logger.notice("Accessibility permission is required for global hotkeys to work")
+
+        guard !TinyAIRuntime.isTestEnvironment else { return }
+
+        requestMissingPermissionsAtLaunch()
+        permissionObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            // Returning from System Settings may have changed TCC state.  A
+            // foreground transition only re-checks; requestMissing() itself
+            // remains guarded by its one-attempt-per-process policy.
+            self?.startKeyboardMonitoringIfPermitted()
         }
+        startKeyboardMonitoringIfPermitted()
+    }
+
+    deinit {
+        if let permissionObserver {
+            NotificationCenter.default.removeObserver(permissionObserver)
+        }
+    }
+
+    private func requestMissingPermissionsAtLaunch() {
+        guard !TinyAIPermissions.allGranted else {
+            startKeyboardMonitoringIfPermitted()
+            return
+        }
+
+        _ = TinyAIPermissions.requestMissing()
+        if !TinyAIPermissions.allGranted {
+            logger.notice("Accessibility and Input Monitoring permissions are required for global hotkeys")
+        }
+    }
+
+    func startKeyboardMonitoringIfPermitted() {
+        guard !TinyAIRuntime.isTestEnvironment,
+              TinyAIPermissions.allGranted else { return }
+        _ = keyboardMonitor?.startMonitoringIfPermitted()
     }
     
     
@@ -210,7 +351,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         .environmentObject(keyboardMonitor)
         
         // Create a hosting view with correct sizing
-        let hostingView = FirstMouseHostingView(rootView: popupView)
+        let hostingView = FirstMouseHostingView(rootView: AnyView(popupView))
         hostingView.frame = NSRect(x: 0, y: 0, width: 420, height: 520)
         hostingView.autoresizingMask = [.width, .height]
         hostingView.wantsLayer = true

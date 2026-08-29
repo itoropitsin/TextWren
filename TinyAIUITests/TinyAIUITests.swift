@@ -7,6 +7,13 @@
 
 import XCTest
 
+func tinyAITestApplication() -> XCUIApplication {
+    let app = XCUIApplication()
+    app.launchArguments.append("--ui-testing")
+    app.launchEnvironment["TINYAI_TEST_MODE"] = "1"
+    return app
+}
+
 final class TinyAIUITests: XCTestCase {
 
     override func setUpWithError() throws {
@@ -24,8 +31,7 @@ final class TinyAIUITests: XCTestCase {
 
     @MainActor
     func testExample() throws {
-        let app = XCUIApplication()
-        app.launchArguments += ["--ui-testing"]
+        let app = tinyAITestApplication()
         app.launch()
 
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
@@ -36,12 +42,12 @@ final class TinyAIUITests: XCTestCase {
         source.click()
         source.typeText("Interface smoke test")
         XCTAssertTrue(app.buttons["Clear source text"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.alerts.firstMatch.exists)
     }
 
     @MainActor
     func testSettingsCancelKeepsDraftChangesOutOfTheLiveWindow() throws {
-        let app = XCUIApplication()
-        app.launchArguments += ["--ui-testing"]
+        let app = tinyAITestApplication()
         app.launch()
 
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 5))
@@ -56,7 +62,9 @@ final class TinyAIUITests: XCTestCase {
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+            let app = tinyAITestApplication()
+            app.launch()
+            app.terminate()
         }
     }
 }

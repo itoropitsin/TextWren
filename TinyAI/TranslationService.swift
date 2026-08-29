@@ -132,21 +132,11 @@ class TranslationService: ObservableObject {
     ]
     static let defaultModel = LLMModel(provider: .openAI, name: OpenAIModel.gpt5Mini.rawValue)
 
-    @Published var apiKey: String = "" {
-        didSet {
-            if !persistAPIKey(apiKey, provider: .openAI), !apiKey.isEmpty {
-                errorMessage = "Could not save the OpenAI API key in Keychain."
-            }
-        }
-    }
-
-    @Published var geminiAPIKey: String = "" {
-        didSet {
-            if !persistAPIKey(geminiAPIKey, provider: .gemini), !geminiAPIKey.isEmpty {
-                errorMessage = "Could not save the Gemini API key in Keychain."
-            }
-        }
-    }
+    // API-key properties are state only. Keychain writes happen in
+    // saveAPIKey(_:,for:) after the user presses Save, never as a side effect
+    // of loading or assigning a value.
+    @Published var apiKey: String = ""
+    @Published var geminiAPIKey: String = ""
 
     @Published var customActions: [CustomAction] = [] {
         didSet {
@@ -241,14 +231,19 @@ class TranslationService: ObservableObject {
         }
     }
 
-	    @Published var isTranslating: Bool = false
-	    @Published var errorMessage: String?
-	    
-	    private let openAIChatCompletionsURLString = "https://api.openai.com/v1/chat/completions"
-	    private let openAIResponsesURLString = "https://api.openai.com/v1/responses"
-	    private let keychainService: String
-	    private let session: URLSession
-	    private let jsonDecoder = JSONDecoder()
+    @Published var isTranslating: Bool = false
+    @Published var errorMessage: String?
+    @Published private(set) var keychainReadStatuses: [LLMProvider: KeychainReadResult] = [:]
+
+    private let openAIChatCompletionsURLString = "https://api.openai.com/v1/chat/completions"
+    private let openAIResponsesURLString = "https://api.openai.com/v1/responses"
+    private let keychainService: String
+    private let keychainClient: KeychainClient
+    private let defaults: UserDefaults
+    private let session: URLSession
+    private let jsonDecoder = JSONDecoder()
+    private var providersNeedingExplicitKeychainSave: Set<LLMProvider> = []
+    private var legacyOpenAIKeyNeedsRemoval = false
 
     private let apiKeyDefaultsKey = "OpenAIAPIKey"
     private let legacyModelDefaultsKey = "OpenAIModel"
@@ -269,8 +264,10 @@ class TranslationService: ObservableObject {
     private let deletedLLMModelsDefaultsKey = "DeletedLLMModelsV1"
     private var deletedModelKeys: Set<String> = []
     
-    init() {
-        keychainService = Bundle.main.bundleIdentifier ?? "TinyAI"
+    init(keychainClient: KeychainClient? = nil, defaults: UserDefaults = TinyAIRuntime.userDefaults) {
+        keychainService = "IT.TinyAI"
+        self.keychainClient = keychainClient ?? KeychainStore.client
+        self.defaults = defaults
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 60
@@ -333,7 +330,16 @@ class TranslationService: ObservableObject {
     }
 
     func saveAPIKey(_ key: String, for provider: LLMProvider) {
-        setAPIKey(key.trimmingCharacters(in: .whitespacesAndNewlines), for: provider)
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        setAPIKey(trimmed, for: provider)
+
+        if persistAPIKey(trimmed, provider: provider) {
+            markKeychainPersistenceSucceeded(for: provider)
+        } else {
+            providersNeedingExplicitKeychainSave.insert(provider)
+            keychainReadStatuses[provider] = .interactionRequired
+            errorMessage = "Could not save the \(provider.displayName) API key in Keychain."
+        }
     }
 
     func apiKey(for provider: LLMProvider) -> String {
@@ -349,18 +355,61 @@ class TranslationService: ObservableObject {
         !apiKey(for: provider).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    func keychainStatus(for provider: LLMProvider) -> KeychainReadResult? {
+        keychainReadStatuses[provider]
+    }
+
+    /// Retry a protected read only after an explicit Settings action. Startup
+    /// reads use the non-interactive path and never call this method.
+    @discardableResult
+    func retryKeychainAccess(for provider: LLMProvider) -> KeychainReadResult {
+        let result = keychainClient.readString(
+            service: keychainService,
+            account: provider.keychainAccount,
+            allowInteraction: true
+        )
+        keychainReadStatuses[provider] = result
+
+        switch result {
+        case .value(let value):
+            setAPIKey(value, for: provider)
+            markKeychainPersistenceSucceeded(for: provider)
+        case .missing:
+            if provider == .openAI, let legacyKey = defaults.string(forKey: apiKeyDefaultsKey) {
+                if keychainClient.saveString(
+                    legacyKey,
+                    service: keychainService,
+                    account: provider.keychainAccount,
+                    allowInteraction: true
+                ) {
+                    defaults.removeObject(forKey: apiKeyDefaultsKey)
+                    legacyOpenAIKeyNeedsRemoval = false
+                    setAPIKey(legacyKey, for: provider)
+                    markKeychainPersistenceSucceeded(for: provider)
+                    return .value(legacyKey)
+                }
+                providersNeedingExplicitKeychainSave.insert(provider)
+                keychainReadStatuses[provider] = .interactionRequired
+                return .interactionRequired
+            }
+        case .interactionRequired, .failure:
+            break
+        }
+        return result
+    }
+
     @MainActor
     func validateAndSaveAPIKey(_ key: String, for provider: LLMProvider) async -> Result<Void, LLMKeyValidationError> {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            setAPIKey("", for: provider)
+            saveAPIKey("", for: provider)
             return .success(())
         }
 
         let result = await validateAPIKey(trimmed, for: provider)
         switch result {
         case .success:
-            setAPIKey(trimmed, for: provider)
+            saveAPIKey(trimmed, for: provider)
             return .success(())
         case .failure(let error):
             return .failure(error)
@@ -580,24 +629,63 @@ Rules:
     private func persistAPIKey(_ value: String, provider: LLMProvider) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            return KeychainStore.delete(service: keychainService, account: provider.keychainAccount)
+            return keychainClient.delete(
+                service: keychainService,
+                account: provider.keychainAccount,
+                allowInteraction: true
+            )
         } else {
-            return KeychainStore.saveString(trimmed, service: keychainService, account: provider.keychainAccount)
+            return keychainClient.saveString(
+                trimmed,
+                service: keychainService,
+                account: provider.keychainAccount,
+                allowInteraction: true
+            )
         }
     }
 
     private func loadOrMigrateAPIKey(provider: LLMProvider) -> String {
-        if let savedKey = KeychainStore.loadString(service: keychainService, account: provider.keychainAccount) {
-            return savedKey
-        }
+        let result = keychainClient.readString(
+            service: keychainService,
+            account: provider.keychainAccount,
+            allowInteraction: false
+        )
+        keychainReadStatuses[provider] = result
 
-        if provider == .openAI, let legacySavedKey = UserDefaults.standard.string(forKey: apiKeyDefaultsKey) {
-            _ = KeychainStore.saveString(legacySavedKey, service: keychainService, account: provider.keychainAccount)
-            UserDefaults.standard.removeObject(forKey: apiKeyDefaultsKey)
+        switch result {
+        case .value(let savedKey):
+            return savedKey
+        case .interactionRequired, .failure:
+            // A protected item is not missing. Keep any legacy copy in memory
+            // for an explicit Save, but never overwrite or delete Keychain data
+            // during startup.
+            if provider == .openAI, defaults.string(forKey: apiKeyDefaultsKey) != nil {
+                legacyOpenAIKeyNeedsRemoval = true
+                return defaults.string(forKey: apiKeyDefaultsKey) ?? ""
+            }
+            return ""
+        case .missing:
+            guard provider == .openAI,
+                  let legacySavedKey = defaults.string(forKey: apiKeyDefaultsKey) else {
+                return ""
+            }
+            // Legacy defaults are kept until the user explicitly saves. This
+            // makes initialization read-only and leaves migration recoverable.
+            providersNeedingExplicitKeychainSave.insert(provider)
+            legacyOpenAIKeyNeedsRemoval = true
+            keychainReadStatuses[provider] = .interactionRequired
             return legacySavedKey
         }
+    }
 
-        return ""
+    private func markKeychainPersistenceSucceeded(for provider: LLMProvider) {
+        providersNeedingExplicitKeychainSave.remove(provider)
+        let persistedValue = apiKey(for: provider).trimmingCharacters(in: .whitespacesAndNewlines)
+        keychainReadStatuses[provider] = persistedValue.isEmpty ? .missing : .value(persistedValue)
+        if provider == .openAI, legacyOpenAIKeyNeedsRemoval {
+            defaults.removeObject(forKey: apiKeyDefaultsKey)
+            legacyOpenAIKeyNeedsRemoval = false
+        }
     }
 
     private func setAPIKey(_ key: String, for provider: LLMProvider) {
