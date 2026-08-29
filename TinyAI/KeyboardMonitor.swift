@@ -116,7 +116,8 @@ class KeyboardMonitor: ObservableObject {
     private let doublePressInterval: TimeInterval = 0.5
     private var pendingDoublePressPasteboardChangeCount: Int?
     private let pasteboardPollInterval: TimeInterval = 0.01
-    private let pasteboardCopyTimeout: TimeInterval = 0.20
+    private let pasteboardCopyTimeout: TimeInterval = 1.0
+    private let pasteboardStabilityWindow: TimeInterval = 0.10
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var isProcessing: Bool = false // Protection against multiple triggers
@@ -225,25 +226,32 @@ class KeyboardMonitor: ObservableObject {
             .compactMap { $0 }
             .filter { !$0.plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
-        // A plain clipboard value is useful as a last resort, but it must not
-        // win over a rich value that arrived from another representation of
-        // the same selection (for example, Accessibility versus HTML/RTF).
+        // A plain value is useful as a last resort, but semantic structure is
+        // the primary comparison.  Representation availability is considered
+        // only as a tie-breaker after the candidates have the same structure.
         guard var best = candidates.first else { return nil }
-        for candidate in candidates.dropFirst() where richPayloadScore(candidate) > richPayloadScore(best) {
-            best = candidate
+        for candidate in candidates.dropFirst() {
+            let candidateScore = richPayloadScore(candidate)
+            let bestScore = richPayloadScore(best)
+            if candidateScore > bestScore {
+                best = candidate
+            } else if candidateScore == bestScore,
+                      hasRichRepresentation(candidate),
+                      !hasRichRepresentation(best) {
+                best = candidate
+            }
         }
         return best
     }
 
     static func richPayloadScore(_ payload: RichTextPayload) -> Int {
-        var score = 0
-        if payload.html?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-            score += 2
-        }
-        if payload.rtf != nil {
-            score += 1
-        }
-        return score
+        let prepared = RichTextConverter.prepare(payload: payload)
+        let signature = RichTextConverter.structureSignature(of: prepared.attributed)
+        return signature.structuralScore + signature.inlineScore
+    }
+
+    private static func hasRichRepresentation(_ payload: RichTextPayload) -> Bool {
+        payload.html?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false || payload.rtf != nil
     }
 
     func applyPopupHotkeySettings(shortcut: KeyboardShortcut, pressMode: PopupHotkeyPressMode) -> String? {
@@ -423,8 +431,7 @@ class KeyboardMonitor: ObservableObject {
                 pasteboard: pasteboard,
                 baselineChangeCount: previousPasteboardChangeCount,
                 replacementTarget: replacementTarget,
-                startedAt: naturalCopyStartedAt,
-                fallbackPayload: nil
+                startedAt: naturalCopyStartedAt
             )
             return
         }
@@ -444,19 +451,7 @@ class KeyboardMonitor: ObservableObject {
         // for a new pasteboard change without ever reusing stale contents.
         let snapshot = snapshotPasteboard(pasteboard)
         let initialChangeCount = pasteboard.changeCount
-
-        // Copy selected text
-        isSimulatingCopy = true
-        let source = CGEventSource(stateID: .hidSystemState)
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x08, keyDown: true) // C key
-        keyDown?.flags = .maskCommand
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x08, keyDown: false)
-        if let keyDown, let keyUp {
-            keyDown.post(tap: .cghidEventTap)
-            keyUp.post(tap: .cghidEventTap)
-        }
-
-        waitForPasteboardCopy(
+        requestSyntheticCopy(
             pasteboard: pasteboard,
             snapshot: snapshot,
             initialChangeCount: initialChangeCount,
@@ -474,55 +469,109 @@ class KeyboardMonitor: ObservableObject {
         baselineChangeCount: Int,
         replacementTarget: TextReplacementTarget?,
         startedAt: Date,
-        fallbackPayload: RichTextPayload?
+        latestObservation: RichTextPasteboardObservation? = nil,
+        lastFormatSignature: String? = nil,
+        stableSince: Date? = nil
     ) {
+        let now = Date()
         let currentChangeCount = pasteboard.changeCount
-        var latestPayload = fallbackPayload
+        var latest = latestObservation
+        var observedSignature = lastFormatSignature
+        var observedStableSince = stableSince
+        var timing = RichTextCaptureTimingState(
+            baselineChangeCount: baselineChangeCount,
+            startedAt: startedAt,
+            timeout: pasteboardCopyTimeout,
+            stabilityWindow: pasteboardStabilityWindow,
+            lastFormatSignature: lastFormatSignature,
+            stableSince: stableSince
+        )
+        var timingDecision: RichTextCaptureWaitDecision = .waiting
 
         if currentChangeCount != baselineChangeCount,
-           let payload = RichTextPasteboard.read(from: pasteboard),
-           !payload.plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            latestPayload = payload
+           let observation = observationForCurrentPasteboard(
+               pasteboard: pasteboard,
+               latestObservation: latest
+           ) {
+            let hasReadablePayload = observation.payload?.plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            if hasReadablePayload {
+                let enriched: RichTextPasteboardObservation
+                if observation.formatSignature != lastFormatSignature,
+                   let accessibility = getSelectedAttributedRichText() {
+                    enriched = RichTextPasteboard.merging(observation, withAccessibility: accessibility)
+                } else {
+                    enriched = observation
+                }
+                latest = enriched
+            }
+            timingDecision = timing.observe(
+                changeCount: currentChangeCount,
+                formatSignature: observation.formatSignature,
+                hasReadablePayload: hasReadablePayload,
+                now: now
+            )
+            observedSignature = timing.lastFormatSignature
+            observedStableSince = timing.stableSince
 
-            // A rich representation is complete enough to use immediately.
-            // If this is only plain text, keep polling until the deadline in
-            // case the source app publishes HTML/RTF shortly afterwards.
-            if Self.richPayloadScore(payload) > 0 {
-                var richPayload = payload
-                richPayload.replacementTarget = replacementTarget
-                emitPopupPayload(richPayload)
+            if timingDecision == .accept,
+               let accepted = latest.flatMap({
+                   payloadWithCaptureMetadata(
+                       from: $0,
+                       replacementTarget: replacementTarget,
+                       startedAt: startedAt
+                   )
+               }) {
+                emitPopupPayload(accepted)
                 return
             }
         }
 
-        let elapsed = Date().timeIntervalSince(startedAt)
+        let elapsed = now.timeIntervalSince(startedAt)
+        let hasReadableCopy = latest?.payload?.plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        if timingDecision == .waiting {
+            timingDecision = timing.observe(
+                changeCount: currentChangeCount,
+                formatSignature: nil,
+                hasReadablePayload: hasReadableCopy,
+                now: now
+            )
+            observedSignature = timing.lastFormatSignature
+            observedStableSince = timing.stableSince
+        }
         if elapsed >= pasteboardCopyTimeout {
-            let accessibilityPayload = getSelectedRichText()
-            if var payload = Self.preferredPopupPayload(
-                pendingClipboard: latestPayload,
-                freshClipboard: nil,
-                accessibility: accessibilityPayload
-            ) {
-                payload.replacementTarget = replacementTarget
-                emitPopupPayload(payload)
+            if hasReadableCopy,
+               let observedStableSince,
+               now.timeIntervalSince(observedStableSince) >= pasteboardStabilityWindow,
+               let accepted = latest.flatMap({
+                   payloadWithCaptureMetadata(
+                       from: $0,
+                       replacementTarget: replacementTarget,
+                       startedAt: startedAt
+                   )
+               }) {
+                emitPopupPayload(accepted)
                 return
             }
 
-            // The natural copy did not produce readable text. Use the same
-            // bounded synthetic-copy fallback as the single-press path, but
-            // never read the old clipboard value as if it were the selection.
+            // Give a copy that appeared at the one-second boundary its full
+            // stability window.  If it never settles, use the single allowed
+            // synthetic Copy attempt rather than stale clipboard data.
+            if hasReadableCopy, elapsed < pasteboardCopyTimeout + pasteboardStabilityWindow {
+                scheduleNaturalPasteboardPoll(
+                    pasteboard: pasteboard,
+                    baselineChangeCount: baselineChangeCount,
+                    replacementTarget: replacementTarget,
+                    startedAt: startedAt,
+                    latestObservation: latest,
+                    lastFormatSignature: observedSignature,
+                    stableSince: observedStableSince
+                )
+                return
+            }
+
             let snapshot = snapshotPasteboard(pasteboard)
             let initialChangeCount = pasteboard.changeCount
-            isSimulatingCopy = true
-            let source = CGEventSource(stateID: .hidSystemState)
-            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x08, keyDown: true)
-            keyDown?.flags = .maskCommand
-            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x08, keyDown: false)
-            if let keyDown, let keyUp {
-                keyDown.post(tap: .cghidEventTap)
-                keyUp.post(tap: .cghidEventTap)
-            }
-            waitForPasteboardCopy(
+            requestSyntheticCopy(
                 pasteboard: pasteboard,
                 snapshot: snapshot,
                 initialChangeCount: initialChangeCount,
@@ -532,22 +581,76 @@ class KeyboardMonitor: ObservableObject {
             return
         }
 
+        scheduleNaturalPasteboardPoll(
+            pasteboard: pasteboard,
+            baselineChangeCount: baselineChangeCount,
+            replacementTarget: replacementTarget,
+            startedAt: startedAt,
+            latestObservation: latest,
+            lastFormatSignature: observedSignature,
+            stableSince: observedStableSince
+        )
+    }
+
+    private func scheduleNaturalPasteboardPoll(
+        pasteboard: NSPasteboard,
+        baselineChangeCount: Int,
+        replacementTarget: TextReplacementTarget?,
+        startedAt: Date,
+        latestObservation: RichTextPasteboardObservation?,
+        lastFormatSignature: String?,
+        stableSince: Date?
+    ) {
         DispatchQueue.main.asyncAfter(deadline: .now() + pasteboardPollInterval) { [weak self] in
             self?.waitForNaturalPasteboardCopy(
                 pasteboard: pasteboard,
                 baselineChangeCount: baselineChangeCount,
                 replacementTarget: replacementTarget,
                 startedAt: startedAt,
-                fallbackPayload: latestPayload
+                latestObservation: latestObservation,
+                lastFormatSignature: lastFormatSignature,
+                stableSince: stableSince
             )
         }
     }
 
     private func emitPopupPayload(_ payload: RichTextPayload) {
+        if let metadata = payload.captureMetadata {
+            let types = metadata.availableTypes.joined(separator: ",")
+            logger.info(
+                "selection capture app=\(metadata.application, privacy: .public) source=\(metadata.source.rawValue, privacy: .public) completeness=\(metadata.completeness.rawValue, privacy: .public) types=\(types, privacy: .public) elapsedMs=\(metadata.elapsedMilliseconds) blocks=\(metadata.blockCount) lists=\(metadata.listCount) links=\(metadata.linkCount) styles=\(metadata.styleCount)"
+            )
+        }
         onPopupHotkey?(payload)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.isProcessing = false
         }
+    }
+
+    private func requestSyntheticCopy(
+        pasteboard: NSPasteboard,
+        snapshot: PasteboardSnapshot,
+        initialChangeCount: Int,
+        replacementTarget: TextReplacementTarget?,
+        startedAt: Date
+    ) {
+        isSimulatingCopy = true
+        let source = CGEventSource(stateID: .hidSystemState)
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x08, keyDown: true)
+        keyDown?.flags = .maskCommand
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x08, keyDown: false)
+        if let keyDown, let keyUp {
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+        }
+
+        waitForPasteboardCopy(
+            pasteboard: pasteboard,
+            snapshot: snapshot,
+            initialChangeCount: initialChangeCount,
+            replacementTarget: replacementTarget,
+            startedAt: startedAt
+        )
     }
 
     private func waitForPasteboardCopy(
@@ -555,26 +658,96 @@ class KeyboardMonitor: ObservableObject {
         snapshot: PasteboardSnapshot,
         initialChangeCount: Int,
         replacementTarget: TextReplacementTarget?,
-        startedAt: Date
+        startedAt: Date,
+        latestObservation: RichTextPasteboardObservation? = nil,
+        lastFormatSignature: String? = nil,
+        stableSince: Date? = nil
     ) {
         let copiedChangeCount = pasteboard.changeCount
-        let elapsed = Date().timeIntervalSince(startedAt)
+        let now = Date()
+        let elapsed = now.timeIntervalSince(startedAt)
+        var latest = latestObservation
+        var observedSignature = lastFormatSignature
+        var observedStableSince = stableSince
+        var timing = RichTextCaptureTimingState(
+            baselineChangeCount: initialChangeCount,
+            startedAt: startedAt,
+            timeout: pasteboardCopyTimeout,
+            stabilityWindow: pasteboardStabilityWindow,
+            lastFormatSignature: lastFormatSignature,
+            stableSince: stableSince
+        )
+        var timingDecision: RichTextCaptureWaitDecision = .waiting
 
         if copiedChangeCount != initialChangeCount,
-           var payload = RichTextPasteboard.read(from: pasteboard),
-           !payload.plain.isEmpty {
-            payload.replacementTarget = replacementTarget
-            onPopupHotkey?(payload)
+           let observation = observationForCurrentPasteboard(
+               pasteboard: pasteboard,
+               latestObservation: latest
+           ) {
+            let hasReadablePayload = observation.payload?.plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            if hasReadablePayload {
+                let enriched: RichTextPasteboardObservation
+                if observation.formatSignature != lastFormatSignature,
+                   let accessibility = getSelectedAttributedRichText() {
+                    enriched = RichTextPasteboard.merging(observation, withAccessibility: accessibility)
+                } else {
+                    enriched = observation
+                }
+                latest = enriched
+            }
+            timingDecision = timing.observe(
+                changeCount: copiedChangeCount,
+                formatSignature: observation.formatSignature,
+                hasReadablePayload: hasReadablePayload,
+                now: now
+            )
+            observedSignature = timing.lastFormatSignature
+            observedStableSince = timing.stableSince
 
-            // Restore only the clipboard contents produced by our synthetic copy.
-            // If the user copied something else in the meantime, never overwrite it.
-            if pasteboard.changeCount == copiedChangeCount {
-                restorePasteboard(pasteboard, snapshot: snapshot)
+            if timingDecision == .accept,
+               let accepted = latest.flatMap({
+                   payloadWithCaptureMetadata(
+                       from: $0,
+                       replacementTarget: replacementTarget,
+                       startedAt: startedAt
+                   )
+               }) {
+                emitSyntheticPayload(
+                    accepted,
+                    pasteboard: pasteboard,
+                    copiedChangeCount: copiedChangeCount,
+                    snapshot: snapshot
+                )
+                return
             }
-            isSimulatingCopy = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) { [weak self] in
-                self?.isProcessing = false
-            }
+        }
+
+        if timingDecision == .waiting {
+            timingDecision = timing.observe(
+                changeCount: copiedChangeCount,
+                formatSignature: nil,
+                hasReadablePayload: latest?.payload != nil,
+                now: now
+            )
+            observedSignature = timing.lastFormatSignature
+            observedStableSince = timing.stableSince
+        }
+
+        if elapsed >= pasteboardCopyTimeout + pasteboardStabilityWindow,
+           let latest,
+           let observedStableSince,
+           now.timeIntervalSince(observedStableSince) >= pasteboardStabilityWindow,
+           let accepted = payloadWithCaptureMetadata(
+               from: latest,
+               replacementTarget: replacementTarget,
+               startedAt: startedAt
+           ) {
+            emitSyntheticPayload(
+                accepted,
+                pasteboard: pasteboard,
+                copiedChangeCount: copiedChangeCount,
+                snapshot: snapshot
+            )
             return
         }
 
@@ -596,9 +769,76 @@ class KeyboardMonitor: ObservableObject {
                 snapshot: snapshot,
                 initialChangeCount: initialChangeCount,
                 replacementTarget: replacementTarget,
-                startedAt: startedAt
+                startedAt: startedAt,
+                latestObservation: latest,
+                lastFormatSignature: observedSignature,
+                stableSince: observedStableSince
             )
         }
+    }
+
+    private func emitSyntheticPayload(
+        _ payload: RichTextPayload,
+        pasteboard: NSPasteboard,
+        copiedChangeCount: Int,
+        snapshot: PasteboardSnapshot
+    ) {
+        emitPopupPayload(payload)
+        // Restore only the clipboard contents produced by our synthetic copy.
+        // If the user copied something else in the meantime, never overwrite it.
+        if pasteboard.changeCount == copiedChangeCount {
+            restorePasteboard(pasteboard, snapshot: snapshot)
+        }
+        isSimulatingCopy = false
+    }
+
+    private func payloadWithCaptureMetadata(
+        from observation: RichTextPasteboardObservation,
+        replacementTarget: TextReplacementTarget?,
+        startedAt: Date
+    ) -> RichTextPayload? {
+        guard var payload = observation.payload,
+              let prepared = observation.prepared else {
+            return nil
+        }
+        let summary = RichTextConverter.formattingSummary(of: prepared)
+        let source = observation.source ?? .pasteboardPlain
+        let completeness: RichTextCaptureCompleteness
+        switch source {
+        case .pasteboardPlain:
+            completeness = summary.listCount > 0 || summary.linkCount > 0 || summary.styleCount > 0 ? .rich : .plain
+        case .pasteboardHTML, .pasteboardRTF, .pasteboardRTFD:
+            completeness = .rich
+        case .accessibilityAttributed:
+            completeness = .attributed
+        case .accessibilityPlain:
+            completeness = .plain
+        }
+        let processName = sourceApplication(for: replacementTarget)
+        payload.replacementTarget = replacementTarget
+        payload.captureMetadata = RichTextCaptureMetadata(
+            application: processName,
+            availableTypes: observation.availableTypes,
+            elapsedMilliseconds: max(0, Int(Date().timeIntervalSince(startedAt) * 1000.0)),
+            source: source,
+            completeness: completeness,
+            blockCount: summary.blockCount,
+            listCount: summary.listCount,
+            linkCount: summary.linkCount,
+            styleCount: summary.styleCount
+        )
+        return payload
+    }
+
+    private func observationForCurrentPasteboard(
+        pasteboard: NSPasteboard,
+        latestObservation: RichTextPasteboardObservation?
+    ) -> RichTextPasteboardObservation? {
+        let signature = RichTextPasteboard.formatSignature(from: pasteboard)
+        if let latestObservation, latestObservation.formatSignature == signature {
+            return latestObservation
+        }
+        return RichTextPasteboard.readObservation(from: pasteboard)
     }
 
     private enum PasteboardValue {
@@ -709,7 +949,7 @@ class KeyboardMonitor: ObservableObject {
         return element
     }
 
-    private func getSelectedRichText() -> RichTextPayload? {
+    private func getSelectedRichText(includePlainFallback: Bool = true) -> RichTextPayload? {
         guard let element = focusedUIElement() else { return nil }
         let target = textReplacementTarget(for: element)
 
@@ -717,24 +957,80 @@ class KeyboardMonitor: ObservableObject {
         var attributedValue: AnyObject?
         let attributedResult = AXUIElementCopyAttributeValue(element, attributedAttribute, &attributedValue)
         if attributedResult == .success, let attributed = attributedValue as? NSAttributedString, !attributed.string.isEmpty {
-            let html = RichTextConverter.html(from: attributed).map(RichTextHTMLSanitizer.sanitize)
-            let rtf = RichTextConverter.rtf(from: attributed)
-            let plain = RichTextConverter.normalizedMarkdown(attributed.string.normalizedPlainText())
-            return RichTextPayload(plain: plain, html: html, rtf: rtf, replacementTarget: target)
+            let prepared = RichTextConverter.prepare(attributed: attributed, inferListMarkers: true)
+            let summary = RichTextConverter.formattingSummary(of: prepared)
+            let metadata = RichTextCaptureMetadata(
+                application: sourceApplication(for: target),
+                availableTypes: ["AXSelectedTextAttributedString"],
+                elapsedMilliseconds: 0,
+                source: .accessibilityAttributed,
+                completeness: .attributed,
+                blockCount: summary.blockCount,
+                listCount: summary.listCount,
+                linkCount: summary.linkCount,
+                styleCount: summary.styleCount
+            )
+            var payload = prepared.payload
+            payload.replacementTarget = target
+            payload.captureMetadata = metadata
+            return payload
         }
+
+        guard includePlainFallback else { return nil }
 
         var selectedText: AnyObject?
         let textResult = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selectedText)
         if textResult == .success, let text = selectedText as? String, !text.isEmpty {
-            return RichTextPayload(
+            var payload = RichTextPayload(
                 plain: RichTextConverter.normalizedMarkdown(text.normalizedPlainText()),
                 html: nil,
                 rtf: nil,
                 replacementTarget: target
             )
+            payload.captureMetadata = RichTextCaptureMetadata(
+                application: sourceApplication(for: target),
+                availableTypes: ["AXSelectedText"],
+                elapsedMilliseconds: 0,
+                source: .accessibilityPlain,
+                completeness: .plain,
+                blockCount: 1,
+                listCount: 0,
+                linkCount: 0,
+                styleCount: 0
+            )
+            return payload
         }
 
         return nil
+    }
+
+    private func sourceApplication(for target: TextReplacementTarget?) -> String {
+        if let target,
+           let application = NSRunningApplication(processIdentifier: target.processIdentifier) {
+            return application.bundleIdentifier ?? application.localizedName ?? "unknown"
+        }
+        return NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            ?? NSWorkspace.shared.frontmostApplication?.localizedName
+            ?? "unknown"
+    }
+
+    /// Read only the formatted Accessibility representation.  This is called
+    /// after a changed pasteboard has been observed, never as a substitute for
+    /// an unconfirmed double-⌘C copy.
+    private func getSelectedAttributedRichText() -> PreparedRichText? {
+        guard let element = focusedUIElement() else { return nil }
+        var value: AnyObject?
+        let result = AXUIElementCopyAttributeValue(
+            element,
+            "AXSelectedTextAttributedString" as CFString,
+            &value
+        )
+        guard result == .success,
+              let attributed = value as? NSAttributedString,
+              !attributed.string.isEmpty else {
+            return nil
+        }
+        return RichTextConverter.prepare(attributed: attributed, inferListMarkers: true)
     }
     
     func stopMonitoring() {

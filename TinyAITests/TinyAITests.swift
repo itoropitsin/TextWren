@@ -261,6 +261,244 @@ struct TinyAITests {
         #expect(pasteboard.data(forType: NSPasteboard.PasteboardType.rtf) != nil)
     }
 
+    @Test func pasteboardCapture_mergesLinksFromHTML_withListsFromRTF() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("TinyAI.Tests.\(UUID().uuidString)"))
+        let item = NSPasteboardItem()
+        let html = "<p>Intro</p><p>See <a href=\"https://example.com/docs\">docs</a></p>"
+            + "<ul><li>One</li><li>Two</li></ul>"
+        let rtf = RichTextConverter.rtf(
+            from: RichTextConverter.prepare(markdown: "Intro\nSee docs\n- One\n- Two").attributed
+        )!
+        item.setString(html, forType: .html)
+        item.setData(rtf, forType: .rtf)
+        item.setString("Intro\nSee docs\n• One\n• Two", forType: .string)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+
+        let observation = RichTextPasteboard.readObservation(from: pasteboard)
+        let payload = observation?.payload
+        let prepared = observation?.prepared
+
+        #expect(payload?.plain == "Intro\nSee docs\n• One\n• Two")
+        #expect(payload?.html?.contains("<ul>") == true)
+        #expect(payload?.html?.contains("https://example.com/docs") == true)
+        #expect(prepared.map { RichTextConverter.structureSignature(of: $0.attributed).listItemCount } == 2)
+        #expect(observation?.availableTypes.contains(NSPasteboard.PasteboardType.html.rawValue) == true)
+        #expect(observation?.availableTypes.contains(NSPasteboard.PasteboardType.rtf.rawValue) == true)
+    }
+
+    @Test func pasteboardCapture_promotesSlackMarkers_withoutSanitizingSourceHTMLFirst() {
+        let marker = RichTextListMarkers.slackPrivateUseBullet
+        let html = "<p>\(marker) First</p><p>\(marker) Second</p><p>After</p>"
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("TinyAI.Tests.\(UUID().uuidString)"))
+        let item = NSPasteboardItem()
+        item.setString(html, forType: .html)
+        item.setString("\(marker) First\n\(marker) Second\nAfter", forType: .string)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+
+        let observation = RichTextPasteboard.readObservation(from: pasteboard)
+        let prepared = observation?.prepared
+        let signature = prepared.map { RichTextConverter.structureSignature(of: $0.attributed) }
+
+        #expect(prepared?.plain == "• First\n• Second\nAfter")
+        #expect(signature?.listItemCount == 2)
+        #expect(signature?.blocks == [
+            "list:unordered:1:item",
+            "list:unordered:1:item",
+            "paragraph"
+        ])
+        #expect(prepared?.payload.html?.contains("<ul>") == true)
+        #expect(prepared?.attributed.string.contains(marker) == false)
+    }
+
+    @Test func pasteboardCapture_browserEditorFixture_keepsLinksAndParagraphs() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("TinyAI.Tests.\(UUID().uuidString)"))
+        let item = NSPasteboardItem()
+        item.setString(
+            "<div>Browser paragraph</div><div>Open <a href=\"https://example.test/guide\">the guide</a></div>",
+            forType: .html
+        )
+        item.setString("Browser paragraph\nOpen the guide", forType: .string)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+
+        let observation = RichTextPasteboard.readObservation(from: pasteboard)
+        let signature = observation?.prepared.map { RichTextConverter.structureSignature(of: $0.attributed) }
+
+        #expect(observation?.source == .pasteboardHTML)
+        #expect(observation?.payload?.plain == "Browser paragraph\nOpen the guide")
+        #expect(signature?.blocks == ["paragraph", "paragraph"])
+        #expect(signature?.links == ["https://example.test/guide"])
+        #expect(observation?.payload?.html?.contains("https://example.test/guide") == true)
+    }
+
+    @Test func pasteboardCapture_textEditFixture_prefersRTFListsAndEmphasis() throws {
+        let source = RichTextConverter.prepare(markdown: "**Native heading**\n- first\n- second")
+        let rtf = try #require(source.payload.rtf)
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("TinyAI.Tests.\(UUID().uuidString)"))
+        let item = NSPasteboardItem()
+        item.setData(rtf, forType: .rtf)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+
+        let observation = try #require(RichTextPasteboard.readObservation(from: pasteboard))
+        let prepared = try #require(observation.prepared)
+        let signature = RichTextConverter.structureSignature(of: prepared.attributed)
+
+        #expect(observation.source == .pasteboardRTF)
+        #expect(signature.listItemCount == 2)
+        #expect(signature.inlineTraits.contains { $0.contains("bold") })
+        #expect(prepared.payload.html?.contains("<ul>") == true)
+    }
+
+    @Test func pasteboardCapture_notesFixture_readsFlatRTFDAndKeepsEmoji() throws {
+        let source = NSAttributedString(
+            string: "Note 😊\n- reminder",
+            attributes: [.font: NSFont.systemFont(ofSize: 13)]
+        )
+        let rtfd = try source.data(
+            from: NSRange(location: 0, length: source.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtfd]
+        )
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("TinyAI.Tests.\(UUID().uuidString)"))
+        let item = NSPasteboardItem()
+        item.setData(rtfd, forType: NSPasteboard.PasteboardType("com.apple.flat-rtfd"))
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+
+        let observation = try #require(RichTextPasteboard.readObservation(from: pasteboard))
+        let prepared = try #require(observation.prepared)
+        let signature = RichTextConverter.structureSignature(of: prepared.attributed)
+
+        #expect(observation.source == .pasteboardRTFD)
+        #expect(prepared.payload.plain.contains("😊"))
+        #expect(signature.listItemCount == 1)
+    }
+
+    @Test func pasteboardCapture_keepsQuotesCodeEmojiAndInlineStyles() {
+        let html = "<blockquote><p><strong>Bold</strong> <em>italic</em> "
+            + "<u>underlined</u> <s>struck</s> 😊 <code>code</code></p></blockquote>"
+            + "<p><br></p>"
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("TinyAI.Tests.\(UUID().uuidString)"))
+        let item = NSPasteboardItem()
+        item.setString(html, forType: .html)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+
+        let prepared = RichTextPasteboard.readObservation(from: pasteboard)?.prepared
+        let signature = prepared.map { RichTextConverter.structureSignature(of: $0.attributed) }
+
+        #expect(prepared?.plain.contains("Bold italic underlined struck 😊 code") == true)
+        #expect(signature?.blocks.contains("quote") == true)
+        #expect(signature?.blocks.contains("blank") == true)
+        #expect(signature?.inlineTraits.contains { $0.contains("bold") } == true)
+        #expect(signature?.inlineTraits.contains { $0.contains("italic") } == true)
+        #expect(signature?.inlineTraits.contains { $0.contains("underline") } == true)
+        #expect(signature?.inlineTraits.contains { $0.contains("strike") } == true)
+        #expect(signature?.inlineTraits.contains { $0.contains("mono") } == true)
+        #expect(prepared?.payload.html?.contains("<blockquote>") == true)
+        #expect(prepared?.payload.html?.contains("😊") == true)
+    }
+
+    @Test func pasteboardCapture_canAddFormattedAccessibility_toConfirmedCopy() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("TinyAI.Tests.\(UUID().uuidString)"))
+        let item = NSPasteboardItem()
+        item.setString("- First\n- Second", forType: .string)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([item])
+
+        guard let observation = RichTextPasteboard.readObservation(from: pasteboard) else {
+            Issue.record("Expected a pasteboard observation")
+            return
+        }
+        let accessibility = RichTextConverter.prepare(html: "<p><strong>First</strong></p><p><strong>Second</strong></p>")!
+        let merged = RichTextPasteboard.merging(observation, withAccessibility: accessibility)
+        let signature = merged.prepared.map { RichTextConverter.structureSignature(of: $0.attributed) }
+
+        #expect(merged.payload?.plain == "• First\n• Second")
+        #expect(signature?.listItemCount == 2)
+        #expect(signature?.inlineTraits.contains { $0.contains("bold") } == true)
+        #expect(merged.availableTypes.contains("AXSelectedTextAttributedString"))
+    }
+
+    @Test func pasteboardCapture_keepsSeparateLists_andPreservesMultipleItemsOrder() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("TinyAI.Tests.\(UUID().uuidString)"))
+        let first = NSPasteboardItem()
+        first.setString("- one\n- two", forType: .string)
+        let second = NSPasteboardItem()
+        second.setString("- three", forType: .string)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([first, second])
+
+        let observation = RichTextPasteboard.readObservation(from: pasteboard)
+        let prepared = observation?.prepared
+        let signature = prepared.map { RichTextConverter.structureSignature(of: $0.attributed) }
+
+        #expect(prepared?.plain == "• one\n• two\n\n• three")
+        #expect(signature?.listGroupCount == 2)
+        #expect(prepared?.attributed.string == "one\ntwo\n\nthree")
+    }
+
+    @Test func structureSignature_countsNestedItems_asOneListGroup() {
+        let prepared = RichTextConverter.prepare(markdown: "- top\n  - nested\n- sibling\n\n1. separate")
+        let signature = RichTextConverter.structureSignature(of: prepared.attributed)
+
+        #expect(signature.listItemCount == 4)
+        #expect(signature.listGroupCount == 2)
+        #expect(signature.listGroups == [
+            "unordered:1:group0",
+            "unordered:2:group1",
+            "unordered:1:group0",
+            "none",
+            "ordered:1:group2"
+        ])
+    }
+
+    @Test func captureTiming_waitsForRichFormats_afterPlainAndRejectsStaleClipboard() {
+        let start = Date(timeIntervalSinceReferenceDate: 10)
+        var timing = RichTextCaptureTimingState(
+            baselineChangeCount: 7,
+            startedAt: start
+        )
+
+        #expect(timing.observe(
+            changeCount: 7,
+            formatSignature: nil,
+            hasReadablePayload: false,
+            now: start.addingTimeInterval(0.50)
+        ) == .waiting)
+        #expect(timing.observe(
+            changeCount: 8,
+            formatSignature: "plain",
+            hasReadablePayload: true,
+            now: start.addingTimeInterval(0.60)
+        ) == .waiting)
+        #expect(timing.observe(
+            changeCount: 8,
+            formatSignature: "rich",
+            hasReadablePayload: true,
+            now: start.addingTimeInterval(0.65)
+        ) == .waiting)
+        #expect(timing.observe(
+            changeCount: 8,
+            formatSignature: "rich",
+            hasReadablePayload: true,
+            now: start.addingTimeInterval(0.76)
+        ) == .accept)
+
+        var stale = RichTextCaptureTimingState(
+            baselineChangeCount: 7,
+            startedAt: start
+        )
+        #expect(stale.observe(
+            changeCount: 7,
+            formatSignature: "old",
+            hasReadablePayload: true,
+            now: start.addingTimeInterval(1.01)
+        ) == .requestSyntheticCopy)
+    }
+
     @Test func openAIModelFiltering_keepsTextModels_andDropsNonTextModels() {
         #expect(TranslationService.isSupportedOpenAITextModel("gpt-4o"))
         #expect(TranslationService.isSupportedOpenAITextModel("o3-mini"))

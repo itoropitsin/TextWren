@@ -4,8 +4,8 @@ set -euo pipefail
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
 build_root="$(mktemp -d /tmp/TinyAI-build.XXXXXX)"
 app_bundle="$build_root/TinyAI.app"
-version="1.56"
-build_number="72"
+version="1.58"
+build_number="74"
 sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
 
 mkdir -p "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources"
