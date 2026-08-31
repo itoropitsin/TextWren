@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-enum LLMProvider: String, CaseIterable, Identifiable, Codable {
+enum LLMProvider: String, CaseIterable, Identifiable, Codable, Hashable {
     case openAI = "openai"
     case gemini = "gemini"
 
@@ -89,7 +89,12 @@ struct CustomAction: Codable, Identifiable, Equatable {
     var prompt: String
     var model: LLMModel
 
-    init(id: UUID = UUID(), title: String = "", prompt: String = "", model: LLMModel = TranslationService.defaultModel) {
+    init(
+        id: UUID = UUID(),
+        title: String = "",
+        prompt: String = "",
+        model: LLMModel = TranslationService.defaultModel
+    ) {
         self.id = id
         self.title = title
         self.prompt = prompt
@@ -115,6 +120,7 @@ struct CustomAction: Codable, Identifiable, Equatable {
         } else {
             model = TranslationService.defaultModel
         }
+
     }
 }
 
@@ -134,16 +140,30 @@ class TranslationService: ObservableObject {
 
     @Published var apiKey: String = "" {
         didSet {
-            if !persistAPIKey(apiKey, provider: .openAI), !apiKey.isEmpty {
+            guard !isLoadingAPIKeys else { return }
+            let needsExplicitSave = providersNeedingExplicitKeychainSave.contains(.openAI)
+            guard apiKey != oldValue || needsExplicitSave else { return }
+
+            if persistAPIKey(apiKey, provider: .openAI) {
+                markKeychainPersistenceSucceeded(for: .openAI)
+            } else if !apiKey.isEmpty {
                 errorMessage = "Could not save the OpenAI API key in Keychain."
+                providersNeedingExplicitKeychainSave.insert(.openAI)
             }
         }
     }
 
     @Published var geminiAPIKey: String = "" {
         didSet {
-            if !persistAPIKey(geminiAPIKey, provider: .gemini), !geminiAPIKey.isEmpty {
+            guard !isLoadingAPIKeys else { return }
+            let needsExplicitSave = providersNeedingExplicitKeychainSave.contains(.gemini)
+            guard geminiAPIKey != oldValue || needsExplicitSave else { return }
+
+            if persistAPIKey(geminiAPIKey, provider: .gemini) {
+                markKeychainPersistenceSucceeded(for: .gemini)
+            } else if !geminiAPIKey.isEmpty {
                 errorMessage = "Could not save the Gemini API key in Keychain."
+                providersNeedingExplicitKeychainSave.insert(.gemini)
             }
         }
     }
@@ -170,7 +190,7 @@ class TranslationService: ObservableObject {
 
     @Published var builtInTranslateModel: LLMModel = TranslationService.defaultModel {
         didSet {
-            UserDefaults.standard.set(builtInTranslateModel.key, forKey: builtInTranslateModelDefaultsKey)
+            defaults.set(builtInTranslateModel.key, forKey: builtInTranslateModelDefaultsKey)
         }
     }
 
@@ -197,7 +217,7 @@ class TranslationService: ObservableObject {
                 preferredTargetLanguage = normalized
                 return
             }
-            UserDefaults.standard.set(preferredTargetLanguage, forKey: preferredTargetLanguageDefaultsKey)
+            defaults.set(preferredTargetLanguage, forKey: preferredTargetLanguageDefaultsKey)
         }
     }
 
@@ -208,7 +228,7 @@ class TranslationService: ObservableObject {
                 autoTranslateMainLanguage = normalized
                 return
             }
-            UserDefaults.standard.set(autoTranslateMainLanguage, forKey: autoTranslateMainLanguageDefaultsKey)
+            defaults.set(autoTranslateMainLanguage, forKey: autoTranslateMainLanguageDefaultsKey)
         }
     }
 
@@ -219,36 +239,44 @@ class TranslationService: ObservableObject {
                 autoTranslateAdditionalLanguage = normalized
                 return
             }
-            UserDefaults.standard.set(autoTranslateAdditionalLanguage, forKey: autoTranslateAdditionalLanguageDefaultsKey)
+            defaults.set(autoTranslateAdditionalLanguage, forKey: autoTranslateAdditionalLanguageDefaultsKey)
         }
     }
 
     @Published var translationStyleContext: String = "" {
         didSet {
-            UserDefaults.standard.set(translationStyleContext, forKey: translationStyleContextDefaultsKey)
+            defaults.set(translationStyleContext, forKey: translationStyleContextDefaultsKey)
         }
     }
 
     @Published var actionStyleContext: String = "" {
         didSet {
-            UserDefaults.standard.set(actionStyleContext, forKey: actionStyleContextDefaultsKey)
+            defaults.set(actionStyleContext, forKey: actionStyleContextDefaultsKey)
         }
     }
 
     @Published var actionStyleContextActionKeys: Set<String> = [] {
         didSet {
-            UserDefaults.standard.set(Array(actionStyleContextActionKeys), forKey: actionStyleContextActionKeysDefaultsKey)
+            defaults.set(Array(actionStyleContextActionKeys), forKey: actionStyleContextActionKeysDefaultsKey)
         }
     }
 
-	    @Published var isTranslating: Bool = false
-	    @Published var errorMessage: String?
-	    
-	    private let openAIChatCompletionsURLString = "https://api.openai.com/v1/chat/completions"
-	    private let openAIResponsesURLString = "https://api.openai.com/v1/responses"
-	    private let keychainService: String
-	    private let session: URLSession
-	    private let jsonDecoder = JSONDecoder()
+    @Published var isTranslating: Bool = false
+    @Published var errorMessage: String?
+    /// Result of the last non-destructive Keychain read. A protected item is
+    /// kept distinct from a missing item so startup never overwrites it.
+    @Published private(set) var keychainReadStatuses: [LLMProvider: KeychainReadResult] = [:]
+
+    private let openAIChatCompletionsURLString = "https://api.openai.com/v1/chat/completions"
+    private let openAIResponsesURLString = "https://api.openai.com/v1/responses"
+    private let keychainService: String
+    private let keychainClient: KeychainClient
+    private let defaults: UserDefaults
+    private let session: URLSession
+    private let jsonDecoder = JSONDecoder()
+    private var isLoadingAPIKeys = false
+    private var providersNeedingExplicitKeychainSave: Set<LLMProvider> = []
+    private var legacyOpenAIKeyNeedsRemoval = false
 
     private let apiKeyDefaultsKey = "OpenAIAPIKey"
     private let legacyModelDefaultsKey = "OpenAIModel"
@@ -269,41 +297,50 @@ class TranslationService: ObservableObject {
     private let deletedLLMModelsDefaultsKey = "DeletedLLMModelsV1"
     private var deletedModelKeys: Set<String> = []
     
-    init() {
-        keychainService = Bundle.main.bundleIdentifier ?? "TinyAI"
+    init(keychainClient: KeychainClient? = nil, defaults: UserDefaults = TinyAIRuntime.userDefaults) {
+        keychainService = "IT.TinyAI"
+        self.keychainClient = keychainClient ?? KeychainStore.client
+        self.defaults = defaults
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 60
         session = URLSession(configuration: configuration)
 
-        apiKey = loadOrMigrateAPIKey(provider: .openAI)
-        geminiAPIKey = loadOrMigrateAPIKey(provider: .gemini)
+        isLoadingAPIKeys = true
+        if TinyAIRuntime.isTestEnvironment, keychainClient == nil {
+            apiKey = ""
+            geminiAPIKey = ""
+        } else {
+            apiKey = loadOrMigrateAPIKey(provider: .openAI)
+            geminiAPIKey = loadOrMigrateAPIKey(provider: .gemini)
+        }
+        isLoadingAPIKeys = false
 
         builtInTranslateModel = loadBuiltInTranslateModel()
 
         llmModels = loadModelsFromDefaults()
         llmModelVisibility = loadModelVisibilityFromDefaults()
         llmModelAvailability = loadModelAvailabilityFromDefaults()
-        deletedModelKeys = Set(UserDefaults.standard.stringArray(forKey: deletedLLMModelsDefaultsKey) ?? [])
+        deletedModelKeys = Set(defaults.stringArray(forKey: deletedLLMModelsDefaultsKey) ?? [])
         normalizeModelsAndVisibility()
 
         preferredTargetLanguage = normalizedLanguageSelection(
-            UserDefaults.standard.string(forKey: preferredTargetLanguageDefaultsKey) ?? preferredTargetLanguage
+            defaults.string(forKey: preferredTargetLanguageDefaultsKey) ?? preferredTargetLanguage
         )
 
         autoTranslateMainLanguage = normalizedSupportedLanguage(
-            UserDefaults.standard.string(forKey: autoTranslateMainLanguageDefaultsKey) ?? autoTranslateMainLanguage,
+            defaults.string(forKey: autoTranslateMainLanguageDefaultsKey) ?? autoTranslateMainLanguage,
             fallback: "Russian"
         )
         autoTranslateAdditionalLanguage = normalizedSupportedLanguage(
-            UserDefaults.standard.string(forKey: autoTranslateAdditionalLanguageDefaultsKey) ?? autoTranslateAdditionalLanguage,
+            defaults.string(forKey: autoTranslateAdditionalLanguageDefaultsKey) ?? autoTranslateAdditionalLanguage,
             fallback: "English"
         )
 
-        translationStyleContext = UserDefaults.standard.string(forKey: translationStyleContextDefaultsKey) ?? ""
-        actionStyleContext = UserDefaults.standard.string(forKey: actionStyleContextDefaultsKey) ?? ""
+        translationStyleContext = defaults.string(forKey: translationStyleContextDefaultsKey) ?? ""
+        actionStyleContext = defaults.string(forKey: actionStyleContextDefaultsKey) ?? ""
         actionStyleContextActionKeys = Set(
-            UserDefaults.standard.array(forKey: actionStyleContextActionKeysDefaultsKey) as? [String] ?? []
+            defaults.array(forKey: actionStyleContextActionKeysDefaultsKey) as? [String] ?? []
         )
 
         let loadedActions = loadCustomActionsFromDefaults()
@@ -347,6 +384,72 @@ class TranslationService: ObservableObject {
 
     func hasAPIKey(for provider: LLMProvider) -> Bool {
         !apiKey(for: provider).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    func keychainStatus(for provider: LLMProvider) -> KeychainReadResult? {
+        keychainReadStatuses[provider]
+    }
+
+    /// Retry a protected Keychain read only after an explicit Settings action.
+    /// The cache deliberately bypasses an interaction-required result for this
+    /// call, while normal startup reads remain non-interactive and cached.
+    @discardableResult
+    func retryKeychainAccess(for provider: LLMProvider) -> KeychainReadResult {
+        let result = keychainClient.readString(
+            service: keychainService,
+            account: provider.keychainAccount,
+            allowInteraction: true
+        )
+        keychainReadStatuses[provider] = result
+
+        // A missing legacy item can be migrated during this explicit retry.
+        // Return the effective result of that operation, rather than the
+        // intermediate Keychain read, so callers can update their state from
+        // the value that is now actually available.
+        var effectiveResult = result
+
+        switch result {
+        case .value(let value):
+            isLoadingAPIKeys = true
+            setAPIKey(value, for: provider)
+            isLoadingAPIKeys = false
+            // A successful explicit read proves that the protected item is
+            // available. Clear any pending migration marker so reopening
+            // Settings does not schedule another write, and remove the old
+            // UserDefaults copy only after the Keychain value is confirmed.
+            markKeychainPersistenceSucceeded(for: provider)
+        case .missing:
+            // A user-triggered read is also a safe point to finish a legacy
+            // migration. The startup path uses the same helper with
+            // interaction disabled; here the user has explicitly asked us to
+            // retry, so a protected Keychain write may be allowed to ask once.
+            if provider == .openAI,
+               let legacyKey = defaults.string(forKey: apiKeyDefaultsKey) {
+                let migrated = keychainClient.saveString(
+                    legacyKey,
+                    service: keychainService,
+                    account: provider.keychainAccount,
+                    allowInteraction: true
+                )
+                if migrated {
+                    defaults.removeObject(forKey: apiKeyDefaultsKey)
+                    keychainReadStatuses[provider] = .value(legacyKey)
+                    effectiveResult = .value(legacyKey)
+                    isLoadingAPIKeys = true
+                    setAPIKey(legacyKey, for: provider)
+                    isLoadingAPIKeys = false
+                    markKeychainPersistenceSucceeded(for: provider)
+                } else {
+                    providersNeedingExplicitKeychainSave.insert(provider)
+                    legacyOpenAIKeyNeedsRemoval = true
+                    keychainReadStatuses[provider] = .interactionRequired
+                    effectiveResult = .interactionRequired
+                }
+            }
+        case .interactionRequired, .failure:
+            break
+        }
+        return effectiveResult
     }
 
     @MainActor
@@ -555,6 +658,7 @@ Rules:
 - Keep the original language.
 - Preserve tone (formal/informal), voice, and intent.
 - Preserve formatting: line breaks, lists, numbering, emojis, code blocks, and URLs.
+- Preserve every Markdown link destination exactly. You may correct the visible link label, but never change its hidden address. Remove a link only when its linked content is removed or the user explicitly asks for it.
 - Do not add explanations, notes, or commentary.
 - Output only the corrected version of the text.
 """
@@ -565,7 +669,7 @@ Rules:
     }
 
     private func resolveLegacyDefaultModel() -> OpenAIModel {
-        if let savedLegacyModelRaw = UserDefaults.standard.string(forKey: legacyModelDefaultsKey),
+        if let savedLegacyModelRaw = defaults.string(forKey: legacyModelDefaultsKey),
            let savedModel = OpenAIModel(rawValue: savedLegacyModelRaw) {
             return savedModel
         }
@@ -580,24 +684,76 @@ Rules:
     private func persistAPIKey(_ value: String, provider: LLMProvider) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            return KeychainStore.delete(service: keychainService, account: provider.keychainAccount)
+            return keychainClient.delete(service: keychainService, account: provider.keychainAccount, allowInteraction: true)
         } else {
-            return KeychainStore.saveString(trimmed, service: keychainService, account: provider.keychainAccount)
+            return keychainClient.saveString(trimmed, service: keychainService, account: provider.keychainAccount, allowInteraction: true)
         }
     }
 
     private func loadOrMigrateAPIKey(provider: LLMProvider) -> String {
-        if let savedKey = KeychainStore.loadString(service: keychainService, account: provider.keychainAccount) {
-            return savedKey
-        }
+        let readResult = keychainClient.readString(
+            service: keychainService,
+            account: provider.keychainAccount,
+            allowInteraction: false
+        )
+        keychainReadStatuses[provider] = readResult
 
-        if provider == .openAI, let legacySavedKey = UserDefaults.standard.string(forKey: apiKeyDefaultsKey) {
-            _ = KeychainStore.saveString(legacySavedKey, service: keychainService, account: provider.keychainAccount)
-            UserDefaults.standard.removeObject(forKey: apiKeyDefaultsKey)
+        switch readResult {
+        case .value(let savedKey):
+            return savedKey
+        case .interactionRequired, .failure:
+            // A protected item must not be treated as missing. In particular,
+            // do not overwrite it or repeatedly retry a request that could show
+            // a Keychain dialog during application startup.
+            if provider == .openAI, defaults.string(forKey: apiKeyDefaultsKey) != nil {
+                legacyOpenAIKeyNeedsRemoval = true
+            }
+            return ""
+        case .missing:
+            guard provider == .openAI,
+                  let legacySavedKey = defaults.string(forKey: apiKeyDefaultsKey) else {
+                return ""
+            }
+
+            let migrated = keychainClient.saveString(
+                legacySavedKey,
+                service: keychainService,
+                account: provider.keychainAccount,
+                allowInteraction: false
+            )
+            if migrated {
+                defaults.removeObject(forKey: apiKeyDefaultsKey)
+                keychainReadStatuses[provider] = .value(legacySavedKey)
+            } else {
+                // Keep the legacy value available in memory, but let the next
+                // explicit Settings save retry the Keychain write even when
+                // the user leaves the text unchanged.
+                providersNeedingExplicitKeychainSave.insert(provider)
+                legacyOpenAIKeyNeedsRemoval = true
+                // The read was non-interactive and correctly reported a
+                // missing item, but the guarded migration write may itself
+                // require confirmation. Surface that distinction in Settings
+                // instead of silently presenting a healthy-looking key.
+                keychainReadStatuses[provider] = .interactionRequired
+            }
             return legacySavedKey
         }
+    }
 
-        return ""
+    private func markKeychainPersistenceSucceeded(for provider: LLMProvider) {
+        providersNeedingExplicitKeychainSave.remove(provider)
+        // A successful Settings save is also a successful read for the
+        // purpose of the status shown in Settings.  Clear a stale
+        // "confirmation required" marker so reopening Settings does not keep
+        // offering a retry after the item is already available.
+        let persistedValue = apiKey(for: provider).trimmingCharacters(in: .whitespacesAndNewlines)
+        keychainReadStatuses[provider] = persistedValue.isEmpty
+            ? .missing
+            : .value(persistedValue)
+        if provider == .openAI, legacyOpenAIKeyNeedsRemoval {
+            defaults.removeObject(forKey: apiKeyDefaultsKey)
+            legacyOpenAIKeyNeedsRemoval = false
+        }
     }
 
     private func setAPIKey(_ key: String, for provider: LLMProvider) {
@@ -610,12 +766,12 @@ Rules:
     }
 
     private func loadBuiltInTranslateModel() -> LLMModel {
-        if let savedKey = UserDefaults.standard.string(forKey: builtInTranslateModelDefaultsKey),
+        if let savedKey = defaults.string(forKey: builtInTranslateModelDefaultsKey),
            let parsed = parseModelKey(savedKey) {
             return parsed
         }
 
-        if let savedLegacyModelRaw = UserDefaults.standard.string(forKey: builtInTranslateModelDefaultsKey),
+        if let savedLegacyModelRaw = defaults.string(forKey: builtInTranslateModelDefaultsKey),
            let legacy = OpenAIModel(rawValue: savedLegacyModelRaw) {
             return LLMModel(provider: .openAI, name: legacy.rawValue)
         }
@@ -688,7 +844,7 @@ Rules:
         }
 
         deletedModelKeys.insert(model.key)
-        UserDefaults.standard.set(Array(deletedModelKeys), forKey: deletedLLMModelsDefaultsKey)
+        defaults.set(Array(deletedModelKeys), forKey: deletedLLMModelsDefaultsKey)
         llmModels.removeAll { $0.model == model }
         llmModelVisibility.removeValue(forKey: model.key)
         llmModelAvailability.removeValue(forKey: model.key)
@@ -722,7 +878,7 @@ Rules:
         deletedKeys: Set<String>
     ) {
         deletedModelKeys.formUnion(deletedKeys)
-        UserDefaults.standard.set(Array(deletedModelKeys), forKey: deletedLLMModelsDefaultsKey)
+        defaults.set(Array(deletedModelKeys), forKey: deletedLLMModelsDefaultsKey)
 
         llmModels = Self.dedupModels(models).filter { !deletedModelKeys.contains($0.model.key) }
         llmModelVisibility = visibility.filter { !deletedModelKeys.contains($0.key) }
@@ -731,7 +887,7 @@ Rules:
     }
 
     private func loadModelsFromDefaults() -> [LLMModelEntry] {
-        guard let data = UserDefaults.standard.data(forKey: llmModelsDefaultsKey),
+        guard let data = defaults.data(forKey: llmModelsDefaultsKey),
               let decoded = try? JSONDecoder().decode([LLMModelEntry].self, from: data) else {
             return OpenAIModel.allCases.map { legacy in
                 LLMModelEntry(model: LLMModel(provider: .openAI, name: legacy.rawValue), displayName: legacy.displayName)
@@ -744,11 +900,11 @@ Rules:
         guard let data = try? JSONEncoder().encode(models) else {
             return
         }
-        UserDefaults.standard.set(data, forKey: llmModelsDefaultsKey)
+        defaults.set(data, forKey: llmModelsDefaultsKey)
     }
 
     private func loadModelVisibilityFromDefaults() -> [String: Bool] {
-        guard let data = UserDefaults.standard.data(forKey: llmModelVisibilityDefaultsKey),
+        guard let data = defaults.data(forKey: llmModelVisibilityDefaultsKey),
               let decoded = try? JSONDecoder().decode([String: Bool].self, from: data) else {
             return [:]
         }
@@ -759,11 +915,11 @@ Rules:
         guard let data = try? JSONEncoder().encode(map) else {
             return
         }
-        UserDefaults.standard.set(data, forKey: llmModelVisibilityDefaultsKey)
+        defaults.set(data, forKey: llmModelVisibilityDefaultsKey)
     }
 
     private func loadModelAvailabilityFromDefaults() -> [String: Bool] {
-        guard let data = UserDefaults.standard.data(forKey: llmModelAvailabilityDefaultsKey),
+        guard let data = defaults.data(forKey: llmModelAvailabilityDefaultsKey),
               let decoded = try? JSONDecoder().decode([String: Bool].self, from: data) else {
             return [:]
         }
@@ -774,7 +930,7 @@ Rules:
         guard let data = try? JSONEncoder().encode(map) else {
             return
         }
-        UserDefaults.standard.set(data, forKey: llmModelAvailabilityDefaultsKey)
+        defaults.set(data, forKey: llmModelAvailabilityDefaultsKey)
     }
 
     private func normalizeModelsAndVisibility() {
@@ -1008,7 +1164,7 @@ Rules:
     }
 
     private func loadOrMigrateStarredPrimarySelectionKey(legacyPrimaryId: UUID?) -> String {
-        if let v2 = UserDefaults.standard.string(forKey: starredPrimarySelectionDefaultsKeyV2) {
+        if let v2 = defaults.string(forKey: starredPrimarySelectionDefaultsKeyV2) {
             return v2
         }
 
@@ -1028,7 +1184,7 @@ Rules:
     }
 
     private func saveStarredPrimarySelectionKeyToDefaults(_ key: String) {
-        UserDefaults.standard.set(key, forKey: starredPrimarySelectionDefaultsKeyV2)
+        defaults.set(key, forKey: starredPrimarySelectionDefaultsKeyV2)
     }
 
     private func isLegacyDefaultTranslationActionId(_ id: UUID) -> Bool {
@@ -1099,7 +1255,7 @@ Rules:
     }
 
     private func loadCustomActionsFromDefaults() -> [CustomAction]? {
-        guard let data = UserDefaults.standard.data(forKey: customActionsDefaultsKey) else {
+        guard let data = defaults.data(forKey: customActionsDefaultsKey) else {
             return nil
         }
         return try? JSONDecoder().decode([CustomAction].self, from: data)
@@ -1109,11 +1265,11 @@ Rules:
         guard let data = try? JSONEncoder().encode(actions) else {
             return
         }
-        UserDefaults.standard.set(data, forKey: customActionsDefaultsKey)
+        defaults.set(data, forKey: customActionsDefaultsKey)
     }
 
     private func loadStarredActionIdFromDefaults(key: String) -> UUID? {
-        guard let raw = UserDefaults.standard.string(forKey: key) else {
+        guard let raw = defaults.string(forKey: key) else {
             return nil
         }
         return UUID(uuidString: raw)
@@ -1121,9 +1277,9 @@ Rules:
 
     private func saveStarredActionIdToDefaults(_ id: UUID?, key: String) {
         if let id {
-            UserDefaults.standard.set(id.uuidString, forKey: key)
+            defaults.set(id.uuidString, forKey: key)
         } else {
-            UserDefaults.standard.removeObject(forKey: key)
+            defaults.removeObject(forKey: key)
         }
     }
 
@@ -1141,7 +1297,10 @@ Rules:
         }
     }
 
-    private func translateSystemPrompt(languageMode: TranslationLanguageMode, actionKey: String?) -> String {
+    private func translateSystemPrompt(
+        languageMode: TranslationLanguageMode,
+        actionKey: String?
+    ) -> String {
         var prompt = """
 You are a professional translator. Your priority is to preserve meaning and intent.
 \(Self.translationDirectionInstruction(for: languageMode))
@@ -1152,6 +1311,7 @@ Rules:
 - Preserve formatting exactly: keep all line breaks, paragraph boundaries, list structure, and leading indentation. Do not reflow or merge lines.
 - Outside code blocks and inline code, use the standard Markdown marker "- " for unordered lists; never use a private-use font glyph or unknown placeholder as a list marker.
 - Preserve code blocks and code spans exactly, including private-use characters that are part of code.
+- Preserve every Markdown link destination exactly. You may translate or correct the visible link label, but never change its hidden address. Remove a link only when its linked content is removed or the user explicitly asks for it.
 - Do not add explanations, notes, or commentary.
 - Do not censor or soften content.
 - If a term is ambiguous, choose the most likely meaning from context. If truly unclear, keep the original term in parentheses after the translation.
@@ -1172,7 +1332,7 @@ Output only the translation.
         translateSystemPrompt(languageMode: .fixed(targetLanguage), actionKey: actionKey)
     }
 
-    private func translateHTMLSystemPrompt(languageMode: TranslationLanguageMode, actionKey: String?, strictStructure: Bool = false) -> String {
+    private func translateHTMLSystemPrompt(languageMode: TranslationLanguageMode, actionKey: String?) -> String {
         var prompt = """
 You are a professional translator.
 
@@ -1182,6 +1342,7 @@ Input is HTML.
 Rules:
 - For automatic direction, inspect text nodes for the dominant language; do not infer it from tags, attributes, URLs, or other markup.
 - Preserve the HTML structure exactly: keep tags, attributes, links, code tags, lists, and nesting.
+- Keep every link destination exactly as provided. You may translate or correct the visible link label, but never change its hidden address. Remove a link only when its linked content is removed or the user explicitly asks for it.
 - Translate only the human-readable text content (text nodes).
 - Preserve emphasis/formatting exactly as represented in HTML (e.g. keep <b>/<strong> tags and any inline font-weight styles; do not drop them).
 - Preserve whitespace and line breaks as represented in the HTML.
@@ -1189,9 +1350,6 @@ Rules:
 - Output must be valid HTML and must start with '<' (no Markdown, no code fences, no plain text).
 - If you cannot comply with the rules, output the original input HTML unchanged.
 """
-        if strictStructure {
-            prompt += "\n\nThis is a structure-correction retry. Return the same number and order of paragraphs, blank paragraphs, lists and nested list levels, links (with identical destinations), code blocks/spans, and bold/italic/monospace spans as the input. Translate text only."
-        }
         let style = translationStyleContext.trimmingCharacters(in: .whitespacesAndNewlines)
         if !style.isEmpty {
             prompt += "\n\nTranslation style context:\n\(style)"
@@ -1217,8 +1375,10 @@ Rules:
 - For automatic direction, inspect text nodes for the dominant language; do not infer it from tags, attributes, URLs, or other markup.
 - Use the HTML input only as formatting guidance.
 - Preserve lists, numbering, headings, and emphasis from the input (bold/italic/links) using Markdown.
+- Preserve every link destination exactly. You may translate or correct the visible link label, but never change its hidden address. Remove a link only when its linked content is removed or the user explicitly asks for it.
 - Outside code blocks and inline code, use the standard Markdown marker "- " for unordered lists; never use a private-use font glyph or unknown placeholder as a list marker.
 - Preserve code blocks and code spans exactly, including private-use characters that are part of code.
+- Preserve link destinations exactly when converting links to Markdown. You may translate or correct the visible link label, but never change its hidden address. Remove a link only when its linked content is removed or the user explicitly asks for it.
 - Do not invent emphasis that wasn't present unless required for clarity.
 - Preserve line breaks and paragraph structure.
 - Output only Markdown (no HTML, no code fences).
@@ -1248,6 +1408,7 @@ Rules:
 - Preserve formatting exactly: keep all line breaks, paragraph boundaries, list structure, and leading indentation. Do not reflow or merge lines.
 - Outside code blocks and inline code, use the standard Markdown marker "- " for unordered lists; never use a private-use font glyph or unknown placeholder as a list marker.
 - Preserve code blocks and code spans exactly, including private-use characters that are part of code.
+- Preserve every Markdown link destination exactly. You may correct the visible link label, but never change its hidden address. Remove a link only when its linked content is removed or the user explicitly asks for it.
 - Do not add explanations, notes, or commentary.
 - Output only the corrected version of the text.
 """
@@ -1263,6 +1424,7 @@ Fix punctuation, grammar, and awkward or unclear constructions while preserving 
 Rules:
 - Keep the original language.
 - Preserve the HTML structure exactly: keep tags, attributes, links, code tags, lists, and nesting.
+- Keep every link destination exactly as provided. You may correct the visible link label, but never change its hidden address. Remove a link only when its linked content is removed or the user explicitly asks for it.
 - Edit only the human-readable text content (text nodes).
 - Preserve emphasis/formatting exactly as represented in HTML (e.g. keep <b>/<strong> tags and any inline font-weight styles; do not drop them).
 - Preserve whitespace and line breaks as represented in the HTML.
@@ -1273,8 +1435,8 @@ Rules:
 """
     }
 
-    private func buildHTMLTranslateRequestBody(html: String, languageMode: TranslationLanguageMode, modelName: String, actionKey: String?, strictStructure: Bool = false) -> [String: Any] {
-        let systemPrompt = translateHTMLSystemPrompt(languageMode: languageMode, actionKey: actionKey, strictStructure: strictStructure)
+    private func buildHTMLTranslateRequestBody(html: String, languageMode: TranslationLanguageMode, modelName: String, actionKey: String?) -> [String: Any] {
+        let systemPrompt = translateHTMLSystemPrompt(languageMode: languageMode, actionKey: actionKey)
 
         var requestBody: [String: Any] = [
             "model": modelName,
@@ -1303,8 +1465,7 @@ Rules:
             html: html,
             languageMode: .fixed(targetLanguage),
             modelName: modelName,
-            actionKey: actionKey,
-            strictStructure: false
+            actionKey: actionKey
         )
     }
 
@@ -1408,8 +1569,16 @@ Rules:
         return requestBody
     }
 
-    private func buildRequestBody(text: String, languageMode: TranslationLanguageMode, modelName: String, actionKey: String?) -> [String: Any] {
-        let systemPrompt = translateSystemPrompt(languageMode: languageMode, actionKey: actionKey)
+    private func buildRequestBody(
+        text: String,
+        languageMode: TranslationLanguageMode,
+        modelName: String,
+        actionKey: String?
+    ) -> [String: Any] {
+        let systemPrompt = translateSystemPrompt(
+            languageMode: languageMode,
+            actionKey: actionKey
+        )
 
         var requestBody: [String: Any] = [
             "model": modelName,
@@ -1827,7 +1996,12 @@ Rules:
 		    }
 
     @discardableResult
-    func translateText(text: String, targetLanguage: String, modelOverride: LLMModel?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
+    func translateText(
+        text: String,
+        targetLanguage: String,
+        modelOverride: LLMModel?,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) -> URLSessionDataTask? {
         translateText(
             text: text,
             languageMode: translationLanguageMode(for: targetLanguage),
@@ -1837,7 +2011,12 @@ Rules:
     }
 
     @discardableResult
-    func translateText(text: String, languageMode: TranslationLanguageMode, modelOverride: LLMModel?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
+    func translateText(
+        text: String,
+        languageMode: TranslationLanguageMode,
+        modelOverride: LLMModel?,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) -> URLSessionDataTask? {
 	        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
 	            completion(.failure(TranslationError.emptyText))
 	            return nil
@@ -1848,13 +2027,21 @@ Rules:
 	        guard guardModelAvailable(modelToUse, completion: completion) else { return nil }
 	        switch modelToUse.provider {
 	        case .openAI:
-	            let requestBody = buildRequestBody(text: text, languageMode: languageMode, modelName: modelToUse.name, actionKey: actionKey)
-	            return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody, completion: completion)
+	            let requestBody = buildRequestBody(
+                text: text,
+                languageMode: languageMode,
+                modelName: modelToUse.name,
+                actionKey: actionKey
+            )
+            return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody, completion: completion)
 	        case .gemini:
             return performGeminiGenerateContent(
 	                apiKey: geminiAPIKey,
 	                modelName: modelToUse.name,
-	                systemPrompt: translateSystemPrompt(languageMode: languageMode, actionKey: actionKey),
+	                systemPrompt: translateSystemPrompt(
+                    languageMode: languageMode,
+                    actionKey: actionKey
+	                ),
 	                userText: text,
                 maxOutputTokens: 1000,
                 temperature: 0.3,
@@ -1874,7 +2061,7 @@ Rules:
     }
 
     @discardableResult
-    func translateHTML(html: String, languageMode: TranslationLanguageMode, modelOverride: LLMModel?, strictStructure: Bool = false, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
+    func translateHTML(html: String, languageMode: TranslationLanguageMode, modelOverride: LLMModel?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
 	        guard !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
 	            completion(.failure(TranslationError.emptyText))
 	            return nil
@@ -1885,13 +2072,13 @@ Rules:
 	        guard guardModelAvailable(modelToUse, completion: completion) else { return nil }
 	        switch modelToUse.provider {
 	        case .openAI:
-	            let requestBody = buildHTMLTranslateRequestBody(html: html, languageMode: languageMode, modelName: modelToUse.name, actionKey: actionKey, strictStructure: strictStructure)
+            let requestBody = buildHTMLTranslateRequestBody(html: html, languageMode: languageMode, modelName: modelToUse.name, actionKey: actionKey)
 	            return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody, completion: completion)
 	        case .gemini:
             return performGeminiGenerateContent(
 	                apiKey: geminiAPIKey,
 	                modelName: modelToUse.name,
-	                systemPrompt: translateHTMLSystemPrompt(languageMode: languageMode, actionKey: actionKey, strictStructure: strictStructure),
+                    systemPrompt: translateHTMLSystemPrompt(languageMode: languageMode, actionKey: actionKey),
 	                userText: html,
                 maxOutputTokens: 1500,
                 temperature: 0.2,
@@ -1964,7 +2151,13 @@ Rules:
     }
 
     @discardableResult
-			    func runCustomAction(text: String, prompt: String, actionId: UUID?, modelOverride: LLMModel?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
+    func runCustomAction(
+        text: String,
+        prompt: String,
+        actionId: UUID?,
+        modelOverride: LLMModel?,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) -> URLSessionDataTask? {
 	        let normalizedText = text.normalizedPlainText()
 	        guard !normalizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
 	            completion(.failure(TranslationError.emptyText))
@@ -1987,6 +2180,7 @@ Rules:
           paragraph boundaries, and list structure.
         - Outside code blocks and inline code, use the standard Markdown marker "- " for unordered lists; never use a private-use font glyph or unknown placeholder as a list marker.
         - Preserve code blocks and code spans exactly, including private-use characters that are part of code.
+        - Preserve every Markdown link destination exactly. You may edit the visible link label, but never change its hidden address. Change or remove a link only when the task explicitly asks for it or removes that content.
         """
         let styledPrompt = appendActionStyleContext(to: formattingPrompt, actionKey: actionKey)
 
@@ -2050,7 +2244,13 @@ Rules:
 		    }
 
     @discardableResult
-    func runCustomActionHTML(html: String, prompt: String, actionId: UUID?, modelOverride: LLMModel?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
+    func runCustomActionHTML(
+        html: String,
+        prompt: String,
+        actionId: UUID?,
+        modelOverride: LLMModel?,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) -> URLSessionDataTask? {
         let trimmedHTML = html.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedHTML.isEmpty else {
             completion(.failure(TranslationError.emptyText))
@@ -2074,23 +2274,25 @@ Rules:
         }
 
         let htmlPrompt = """
-System requirements (highest priority):
-- Input is HTML and output must be valid HTML that starts with '<'.
-- The task prompt is authoritative about the requested content and structure. It may
-  intentionally add, remove, reorder, summarize, or otherwise restructure content.
-- For content that the task keeps, preserve semantic formatting and links unless the
-  task explicitly asks to change them. Source-app fonts, sizes and colours are not
-  meaningful and should not be copied.
-- If the task does not ask for a structural change, keep the existing paragraphs,
-  lists, links, code and emphasis.
+        System requirements (highest priority):
+        - Input is HTML and output must be valid HTML that starts with '<'.
+        - The task prompt is authoritative about the requested content and structure. It may
+          intentionally add, remove, reorder, summarize, or otherwise restructure content.
+        - For content that the task keeps, preserve semantic formatting and links unless the
+          task explicitly asks to change them. Source-app fonts, sizes and colours are not
+          meaningful and should not be copied.
+        - Keep every link destination exactly as provided. You may edit the visible link label,
+          but never change its hidden address. Change or remove a link only when the task explicitly asks for it or removes that content.
+        - If the task does not ask for a structural change, keep the existing paragraphs,
+          lists, links, code and emphasis.
 
-Task:
-\(trimmedPrompt)
+        Task:
+        \(trimmedPrompt)
 
-Rules:
-- Change the human-readable content and HTML structure as required by the task.
-- Keep the result parseable HTML. Do not put Markdown or a code fence around it.
-"""
+        Rules:
+        - Change the human-readable content and HTML structure as required by the task.
+        - Keep the result parseable HTML. Do not put Markdown or a code fence around it.
+        """
         let styledPrompt = appendActionStyleContext(to: htmlPrompt, actionKey: actionKey)
 
         switch modelToUse.provider {
@@ -2173,6 +2375,7 @@ System requirements (highest priority):
 - Input is HTML and output must be Markdown (no HTML, no code fences).
 - Use the HTML only as formatting guidance.
 - Preserve lists, numbering, headings, links, and emphasis from the input using Markdown.
+- Preserve every link destination exactly; edit only the visible link label and never change its hidden address. Change or remove a link only when the task explicitly asks for it or removes that content.
 - Outside code blocks and inline code, use the standard Markdown marker "- " for unordered lists; never use a private-use font glyph or unknown placeholder as a list marker.
 - Preserve code blocks and code spans exactly, including private-use characters that are part of code.
 - Keep the output readable and neatly formatted.

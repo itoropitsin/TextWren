@@ -1,7 +1,132 @@
 import SwiftUI
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import os
+
+enum TinyAIRuntime {
+    private static let testDefaultsSuite = "IT.TinyAI.TestRuntime"
+
+    static var isTestEnvironment: Bool {
+        isTestEnvironment(arguments: ProcessInfo.processInfo.arguments, environment: ProcessInfo.processInfo.environment)
+    }
+
+    /// Keep test-host preferences away from the installed application's
+    /// defaults. UI tests already use a separate bundle identifier; this also
+    /// covers unit tests that launch the regular app as their host.
+    static var userDefaults: UserDefaults {
+        guard isTestEnvironment else { return .standard }
+        return UserDefaults(suiteName: testDefaultsSuite) ?? .standard
+    }
+
+    static func isTestEnvironment(arguments: [String], environment: [String: String]) -> Bool {
+        if arguments.contains("--ui-testing") || environment["TINYAI_TEST_MODE"] == "1" {
+            return true
+        }
+
+        // XCTest uses these variables when it injects a test bundle into the
+        // application. Checking them keeps unit-test hosts safe even when the
+        // test did not pass an explicit launch argument.
+        if environment["XCInjectBundleInto"] != nil || environment["XCTestConfigurationFilePath"] != nil {
+            return true
+        }
+
+        return environment.keys.contains { $0.hasPrefix("XCTest") }
+    }
+}
+
+/// Permission checks are kept separate from the event monitor so the app can
+/// inspect status without displaying a system dialog. Only an explicit launch
+/// request or the Settings button may call the requesting methods.
+enum TinyAIPermissions {
+    enum Permission: String, CaseIterable, Identifiable {
+        case accessibility
+        case inputMonitoring
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .accessibility: return "Accessibility"
+            case .inputMonitoring: return "Input Monitoring"
+            }
+        }
+    }
+
+    // Keep permission prompts bounded within one process. The launch path
+    // also stores a per-version marker, while Settings can explicitly opt in
+    // to another request after the user has changed macOS permissions.
+    private static var requestedThisProcess: Set<Permission> = []
+
+    static var accessibilityGranted: Bool {
+        AXIsProcessTrusted()
+    }
+
+    static var inputMonitoringGranted: Bool {
+        if #available(macOS 10.15, *) {
+            return CGPreflightListenEventAccess()
+        }
+        return true
+    }
+
+    static var allGranted: Bool {
+        accessibilityGranted && inputMonitoringGranted
+    }
+
+    static func isGranted(_ permission: Permission) -> Bool {
+        switch permission {
+        case .accessibility: return accessibilityGranted
+        case .inputMonitoring: return inputMonitoringGranted
+        }
+    }
+
+    static func requestablePermissions(
+        accessibilityGranted: Bool,
+        inputMonitoringGranted: Bool,
+        requested: Set<Permission>
+    ) -> [Permission] {
+        Permission.allCases.filter { permission in
+            let granted: Bool
+            switch permission {
+            case .accessibility:
+                granted = accessibilityGranted
+            case .inputMonitoring:
+                granted = inputMonitoringGranted
+            }
+            return !granted && !requested.contains(permission)
+        }
+    }
+
+    /// Ask macOS for any currently missing permission. Normal launch calls
+    /// are limited to one request per process; Settings passes `explicit:
+    /// true` to deliberately retry after the user has changed access.
+    @discardableResult
+    static func requestMissing(explicit: Bool = false) -> Bool {
+        guard !TinyAIRuntime.isTestEnvironment else { return allGranted }
+
+        let requestable: [Permission]
+        if explicit {
+            requestable = Permission.allCases.filter { !isGranted($0) }
+        } else {
+            requestable = requestablePermissions(
+                accessibilityGranted: accessibilityGranted,
+                inputMonitoringGranted: inputMonitoringGranted,
+                requested: requestedThisProcess
+            )
+        }
+
+        if requestable.contains(.accessibility) {
+            requestedThisProcess.insert(.accessibility)
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+            _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        }
+        if #available(macOS 10.15, *), requestable.contains(.inputMonitoring) {
+            requestedThisProcess.insert(.inputMonitoring)
+            _ = CGRequestListenEventAccess()
+        }
+        return allGranted
+    }
+}
 
 @main
 struct TinyAIApp: App {
@@ -20,6 +145,7 @@ struct TinyAIApp: App {
                     keyboardMonitor.onPopupHotkey = { [weak appDelegate] payload in
                         appDelegate?.showTranslationPopup(with: payload)
                     }
+                    appDelegate.startKeyboardMonitoringIfPermitted()
                 }
         }
         .windowStyle(.automatic)
@@ -102,7 +228,10 @@ extension View {
     }
 }
 
-private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+// Keep this subclass concrete. A generic NSHostingView subclass triggers a
+// Swift 6.3 Release-optimizer crash while synthesising its deinit; the view
+// itself does not need to expose its generic root type to the rest of the app.
+private final class FirstMouseHostingView: NSHostingView<AnyView> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
@@ -111,6 +240,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     weak var translationService: TranslationService?
     var keyboardMonitor: KeyboardMonitor?
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TinyAI", category: "AppDelegate")
+    private var permissionObserver: NSObjectProtocol?
+    private let permissionPromptDefaultsKey = "PermissionPromptedVersionV1"
 
     func isFrontmostWindowFullscreen() -> Bool {
         let systemWideElement = AXUIElementCreateSystemWide()
@@ -156,17 +287,66 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Keep the app in the Dock so the main window is visible
         // NSApp.setActivationPolicy(.accessory)
         
-        // Request Accessibility permission
-        requestAccessibilityPermission()
-    }
-    
-    func requestAccessibilityPermission() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        let accessEnabled = AXIsProcessTrustedWithOptions(options as CFDictionary)
-        
-        if !accessEnabled {
-            logger.notice("Accessibility permission is required for global hotkeys to work")
+        guard !TinyAIRuntime.isTestEnvironment else { return }
+
+        requestMissingPermissionsAtLaunchIfNeeded()
+        permissionObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            self?.startKeyboardMonitoringIfPermitted()
         }
+        startKeyboardMonitoringIfPermitted()
+    }
+
+    deinit {
+        if let permissionObserver {
+            NotificationCenter.default.removeObserver(permissionObserver)
+        }
+    }
+
+    private func currentVersionToken() -> String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "unknown"
+        let build = info["CFBundleVersion"] as? String ?? "unknown"
+        return "\(version) (\(build))"
+    }
+
+    private func requestMissingPermissionsAtLaunchIfNeeded() {
+        guard !TinyAIPermissions.allGranted else {
+            startKeyboardMonitoringIfPermitted()
+            return
+        }
+
+        let token = currentVersionToken()
+        let defaults = TinyAIRuntime.userDefaults
+        if defaults.string(forKey: permissionPromptDefaultsKey) != token {
+            // Mark before invoking macOS. If the user closes or denies the
+            // dialog, this version will not surprise them with another prompt
+            // on every launch. Settings provides the explicit retry point.
+            defaults.set(token, forKey: permissionPromptDefaultsKey)
+            _ = TinyAIPermissions.requestMissing()
+        }
+
+        if !TinyAIPermissions.allGranted {
+            logger.notice("Accessibility and Input Monitoring permissions are required for global hotkeys")
+        }
+    }
+
+    /// Manual retry entry point used by Settings. Unlike launch, this is
+    /// always allowed to ask macOS again because the user just requested it.
+    @discardableResult
+    func requestMissingPermissionsManually() -> Bool {
+        let granted = TinyAIPermissions.requestMissing(explicit: true)
+        startKeyboardMonitoringIfPermitted()
+        return granted
+    }
+
+    func startKeyboardMonitoringIfPermitted() {
+        guard !TinyAIRuntime.isTestEnvironment,
+              TinyAIPermissions.allGranted else { return }
+        _ = keyboardMonitor?.startMonitoringIfPermitted()
     }
     
     
@@ -210,7 +390,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         .environmentObject(keyboardMonitor)
         
         // Create a hosting view with correct sizing
-        let hostingView = FirstMouseHostingView(rootView: popupView)
+        let hostingView = FirstMouseHostingView(rootView: AnyView(popupView))
         hostingView.frame = NSRect(x: 0, y: 0, width: 420, height: 520)
         hostingView.autoresizingMask = [.width, .height]
         hostingView.wantsLayer = true

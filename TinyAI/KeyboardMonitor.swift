@@ -117,13 +117,15 @@ class KeyboardMonitor: ObservableObject {
     private var pendingDoublePressPasteboardChangeCount: Int?
     private let pasteboardPollInterval: TimeInterval = 0.01
     private let pasteboardCopyTimeout: TimeInterval = 0.20
+    private(set) var globalMonitoringEnabled: Bool
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var eventTapRunLoop: CFRunLoop?
     private var isProcessing: Bool = false // Protection against multiple triggers
     private var isProcessingCustomAction: Bool = false
     private var isSimulatingCopy: Bool = false
-    private var setupRetryCount: Int = 0
-    private let setupRetryLimit: Int = 10
+    private var eventTapSetupAttempted = false
+    private var lastPermissionState: Bool
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TinyAI", category: "KeyboardMonitor")
 
     private let popupHotkeyKeyCodeDefaultsKey = "PopupHotkeyKeyCodeV1"
@@ -138,8 +140,16 @@ class KeyboardMonitor: ObservableObject {
         23: 5  // 5
     ]
     
-    init() {
-        let defaults = UserDefaults.standard
+    init(globalMonitoringEnabled: Bool? = nil) {
+        if let globalMonitoringEnabled {
+            self.globalMonitoringEnabled = globalMonitoringEnabled && !TinyAIRuntime.isTestEnvironment
+        } else {
+            self.globalMonitoringEnabled = !TinyAIRuntime.isTestEnvironment
+                && TinyAIPermissions.allGranted
+        }
+        self.lastPermissionState = self.globalMonitoringEnabled
+
+        let defaults = TinyAIRuntime.userDefaults
         let savedKeyCode = defaults.object(forKey: popupHotkeyKeyCodeDefaultsKey) as? Int64
         let savedModifiers = defaults.object(forKey: popupHotkeyModifiersDefaultsKey) as? Int
         let savedPressModeRaw = defaults.string(forKey: popupHotkeyPressModeDefaultsKey)
@@ -159,7 +169,9 @@ class KeyboardMonitor: ObservableObject {
             defaults.set(popupHotkeyPressMode.rawValue, forKey: popupHotkeyPressModeDefaultsKey)
         }
 
-        setupGlobalHotkey()
+        if self.globalMonitoringEnabled {
+            setupGlobalHotkey()
+        }
     }
     
     deinit {
@@ -216,6 +228,48 @@ class KeyboardMonitor: ObservableObject {
         return nil
     }
 
+    static func shouldEnableGlobalMonitoring(
+        arguments: [String],
+        environment: [String: String]
+    ) -> Bool {
+        !TinyAIRuntime.isTestEnvironment(arguments: arguments, environment: environment)
+    }
+
+    var isGlobalMonitoringEnabled: Bool {
+        globalMonitoringEnabled
+    }
+
+    static func shouldRetryEventTap(permissionStateChanged: Bool, setupAlreadyAttempted: Bool) -> Bool {
+        permissionStateChanged && setupAlreadyAttempted
+    }
+
+    /// Start the global event tap after the user has granted both permissions.
+    /// The monitor is created before the application delegate receives its
+    /// launch callback, so startup must be able to enable it later without
+    /// constructing a second monitor.
+    @discardableResult
+    func startMonitoringIfPermitted() -> Bool {
+        let permissionsGranted = TinyAIPermissions.allGranted
+        guard !TinyAIRuntime.isTestEnvironment, permissionsGranted else {
+            globalMonitoringEnabled = false
+            lastPermissionState = false
+            return false
+        }
+
+        let permissionStateChanged = !lastPermissionState
+        if Self.shouldRetryEventTap(
+            permissionStateChanged: permissionStateChanged,
+            setupAlreadyAttempted: eventTapSetupAttempted
+        ) {
+            eventTapSetupAttempted = false
+        }
+        lastPermissionState = true
+        globalMonitoringEnabled = true
+        guard !eventTapSetupAttempted else { return eventTap != nil }
+        setupGlobalHotkey()
+        return eventTap != nil
+    }
+
     static func preferredPopupPayload(
         pendingClipboard: RichTextPayload?,
         freshClipboard: RichTextPayload?,
@@ -255,7 +309,7 @@ class KeyboardMonitor: ObservableObject {
         popupHotkeyPressMode = pressMode
         clearPendingDoublePressState()
 
-        let defaults = UserDefaults.standard
+        let defaults = TinyAIRuntime.userDefaults
         defaults.set(shortcut.keyCode, forKey: popupHotkeyKeyCodeDefaultsKey)
         defaults.set(shortcut.modifiers.rawValue, forKey: popupHotkeyModifiersDefaultsKey)
         defaults.set(pressMode.rawValue, forKey: popupHotkeyPressModeDefaultsKey)
@@ -263,6 +317,9 @@ class KeyboardMonitor: ObservableObject {
     }
 
     private func setupGlobalHotkey() {
+        guard globalMonitoringEnabled, eventTap == nil, !eventTapSetupAttempted else { return }
+        eventTapSetupAttempted = true
+
         let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
         
         eventTap = CGEvent.tapCreate(
@@ -279,37 +336,27 @@ class KeyboardMonitor: ObservableObject {
         
         guard let eventTap = eventTap else {
             logger.error("Failed to create event tap")
-            scheduleSetupRetryIfNeeded()
             return
         }
-
-        setupRetryCount = 0
         
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
         guard let runLoopSource = runLoopSource else {
+            CFMachPortInvalidate(eventTap)
+            self.eventTap = nil
             return
         }
         
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        let currentRunLoop = CFRunLoopGetCurrent()
+        eventTapRunLoop = currentRunLoop
+        CFRunLoopAddSource(currentRunLoop, runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
     }
 
-    private func scheduleSetupRetryIfNeeded() {
-        guard setupRetryCount < setupRetryLimit else {
-            return
+    private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        guard globalMonitoringEnabled else {
+            return Unmanaged.passUnretained(event)
         }
 
-        setupRetryCount += 1
-        let delay = min(5.0, 0.5 + (Double(setupRetryCount) * 0.5))
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self else { return }
-            if self.eventTap == nil {
-                self.setupGlobalHotkey()
-            }
-        }
-    }
-    
-    private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
@@ -429,19 +476,12 @@ class KeyboardMonitor: ObservableObject {
             return
         }
 
-        // For a non-copy trigger, Accessibility remains the first fallback.
-        if var payload = Self.preferredPopupPayload(
-            pendingClipboard: nil,
-            freshClipboard: nil,
-            accessibility: getSelectedRichText()
-        ) {
-            payload.replacementTarget = replacementTarget
-            emitPopupPayload(payload)
-            return
-        }
-
-        // Final fallback: ask the target app to copy the selection and wait
-        // for a new pasteboard change without ever reusing stale contents.
+        // For every trigger other than the natural first copy, ask the target
+        // application for a real copy first.  Accessibility is captured as a
+        // fallback, but is not emitted until the short clipboard grace period
+        // has elapsed; otherwise its plain value could win before HTML/RTF is
+        // published by the source application.
+        let accessibilityFallback = getSelectedRichText()
         let snapshot = snapshotPasteboard(pasteboard)
         let initialChangeCount = pasteboard.changeCount
 
@@ -461,7 +501,8 @@ class KeyboardMonitor: ObservableObject {
             snapshot: snapshot,
             initialChangeCount: initialChangeCount,
             replacementTarget: replacementTarget,
-            startedAt: Date()
+            startedAt: Date(),
+            fallbackPayload: accessibilityFallback
         )
     }
 
@@ -527,7 +568,8 @@ class KeyboardMonitor: ObservableObject {
                 snapshot: snapshot,
                 initialChangeCount: initialChangeCount,
                 replacementTarget: replacementTarget,
-                startedAt: Date()
+                startedAt: Date(),
+                fallbackPayload: latestPayload
             )
             return
         }
@@ -555,32 +597,50 @@ class KeyboardMonitor: ObservableObject {
         snapshot: PasteboardSnapshot,
         initialChangeCount: Int,
         replacementTarget: TextReplacementTarget?,
-        startedAt: Date
+        startedAt: Date,
+        fallbackPayload: RichTextPayload?
     ) {
         let copiedChangeCount = pasteboard.changeCount
         let elapsed = Date().timeIntervalSince(startedAt)
+        var latestPayload = fallbackPayload
 
         if copiedChangeCount != initialChangeCount,
-           var payload = RichTextPasteboard.read(from: pasteboard),
-           !payload.plain.isEmpty {
-            payload.replacementTarget = replacementTarget
-            onPopupHotkey?(payload)
+           let payload = RichTextPasteboard.read(from: pasteboard),
+           !payload.plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            latestPayload = payload
 
-            // Restore only the clipboard contents produced by our synthetic copy.
-            // If the user copied something else in the meantime, never overwrite it.
-            if pasteboard.changeCount == copiedChangeCount {
-                restorePasteboard(pasteboard, snapshot: snapshot)
+            // A rich representation is complete enough to use immediately.
+            // Keep polling when the source has published only plain text: its
+            // HTML/RTF item can arrive a few milliseconds later.
+            if Self.richPayloadScore(payload) > 0 {
+                var richPayload = payload
+                richPayload.replacementTarget = replacementTarget
+                emitPopupPayload(richPayload)
+
+                // Restore only the clipboard contents produced by our
+                // synthetic copy. If the user copied something else in the
+                // meantime, never overwrite it.
+                if pasteboard.changeCount == copiedChangeCount {
+                    restorePasteboard(pasteboard, snapshot: snapshot)
+                }
+                isSimulatingCopy = false
+                return
             }
-            isSimulatingCopy = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) { [weak self] in
-                self?.isProcessing = false
-            }
-            return
         }
 
         if elapsed >= pasteboardCopyTimeout {
-            // Do not reuse stale clipboard data when the target application did not
-            // provide a readable selection before the deadline.
+            let accessibilityPayload = getSelectedRichText() ?? fallbackPayload
+            if var payload = Self.preferredPopupPayload(
+                pendingClipboard: latestPayload,
+                freshClipboard: nil,
+                accessibility: accessibilityPayload
+            ) {
+                payload.replacementTarget = replacementTarget
+                emitPopupPayload(payload)
+            }
+
+            // Do not reuse stale clipboard data when the target application did
+            // not provide a readable selection before the deadline.
             if copiedChangeCount != initialChangeCount,
                pasteboard.changeCount == copiedChangeCount {
                 restorePasteboard(pasteboard, snapshot: snapshot)
@@ -596,7 +656,8 @@ class KeyboardMonitor: ObservableObject {
                 snapshot: snapshot,
                 initialChangeCount: initialChangeCount,
                 replacementTarget: replacementTarget,
-                startedAt: startedAt
+                startedAt: startedAt,
+                fallbackPayload: latestPayload
             )
         }
     }
@@ -717,10 +778,9 @@ class KeyboardMonitor: ObservableObject {
         var attributedValue: AnyObject?
         let attributedResult = AXUIElementCopyAttributeValue(element, attributedAttribute, &attributedValue)
         if attributedResult == .success, let attributed = attributedValue as? NSAttributedString, !attributed.string.isEmpty {
-            let html = RichTextConverter.html(from: attributed).map(RichTextHTMLSanitizer.sanitize)
-            let rtf = RichTextConverter.rtf(from: attributed)
-            let plain = RichTextConverter.normalizedMarkdown(attributed.string.normalizedPlainText())
-            return RichTextPayload(plain: plain, html: html, rtf: rtf, replacementTarget: target)
+            var payload = RichTextConverter.prepare(attributed: attributed).payload
+            payload.replacementTarget = target
+            return payload
         }
 
         var selectedText: AnyObject?
@@ -738,8 +798,9 @@ class KeyboardMonitor: ObservableObject {
     }
     
     func stopMonitoring() {
+        globalMonitoringEnabled = false
         if let runLoopSource = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+            CFRunLoopRemoveSource(eventTapRunLoop ?? CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         }
         if let eventTap = eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: false)
@@ -747,6 +808,7 @@ class KeyboardMonitor: ObservableObject {
         }
 
         runLoopSource = nil
+        eventTapRunLoop = nil
         eventTap = nil
     }
 }

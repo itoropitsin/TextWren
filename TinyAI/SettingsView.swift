@@ -31,6 +31,7 @@ struct SettingsView: View {
     @State private var deletedModelKeys: Set<String> = []
     @State private var validatedKeyCandidates: [LLMProvider: String] = [:]
     @State private var keyValidationGeneration: [LLMProvider: Int] = [:]
+    @State private var permissionRefreshToken = UUID()
 
     private let settingsLabelColumnWidth: CGFloat = 130
     private let settingsControlColumnWidth: CGFloat = 240
@@ -236,6 +237,13 @@ struct SettingsView: View {
         let isBusy = busyProviders.contains(provider)
         let hasDraftKey = !key.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasSavedKey = translationService.hasAPIKey(for: provider)
+        let keychainStatus = translationService.keychainStatus(for: provider)
+        let needsKeychainRetry: Bool = {
+            guard let keychainStatus else { return false }
+            if case .interactionRequired = keychainStatus { return true }
+            if case .failure = keychainStatus { return true }
+            return false
+        }()
         let statusColor: Color = hasDraftKey ? .green : .red
 
         return VStack(alignment: .leading, spacing: 8) {
@@ -270,6 +278,29 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isBusy || !hasDraftKey)
+            }
+
+            if needsKeychainRetry {
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.trianglebadge.exclamationmark")
+                        .foregroundColor(.orange)
+                    Text("Keychain access needs your confirmation.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Button("Retry") {
+                        let result = translationService.retryKeychainAccess(for: provider)
+                        switch result {
+                        case .value(let value):
+                            key.wrappedValue = value
+                            validatedKeyCandidates[provider] = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        case .missing:
+                            apiAlert = APIAlert(title: "Key not found", message: "No saved \(provider.displayName) key was found in Keychain.")
+                        case .interactionRequired, .failure:
+                            apiAlert = APIAlert(title: "Keychain access unavailable", message: "Allow access to the TinyAI Keychain item, then try again.")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
         .padding(.vertical, 6)
@@ -614,11 +645,56 @@ struct SettingsView: View {
                         }
                         .frame(width: settingsControlColumnWidth, alignment: .leading)
                     }
+
+                    permissionsSection
                 }
             }
             .padding(.horizontal)
             .padding(.bottom, 8)
         }
+    }
+
+    private var permissionsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Permissions")
+                .font(.headline)
+
+            ForEach(TinyAIPermissions.Permission.allCases) { permission in
+                let granted = TinyAIPermissions.isGranted(permission)
+                HStack(spacing: 12) {
+                    Text(permission.title)
+                        .foregroundColor(.secondary)
+                        .frame(width: settingsLabelColumnWidth, alignment: .leading)
+                    Image(systemName: granted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundColor(granted ? .green : .orange)
+                    Text(granted ? "Granted" : "Required for global hotkeys")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .id("\(permission.rawValue)-\(permissionRefreshToken.uuidString)")
+                .padding(.vertical, 2)
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                Color.clear
+                    .frame(width: settingsLabelColumnWidth, height: 1)
+                VStack(alignment: .leading, spacing: 6) {
+                    Button("Request permission") {
+                        _ = TinyAIPermissions.requestMissing(explicit: true)
+                        _ = keyboardMonitor.startMonitoringIfPermitted()
+                        permissionRefreshToken = UUID()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(TinyAIPermissions.allGranted)
+                    Text("If a request was previously declined, use this button to try again.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .frame(width: settingsControlColumnWidth, alignment: .leading)
+            }
+        }
+        .padding(.top, 8)
     }
 
     private var primaryActionsTab: some View {

@@ -453,6 +453,21 @@
 			};
 			name = Release;
 		};
+		2C21671E2EEC7399004A2529 /* UITesting */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DEVELOPMENT_TEAM = Y29LYS5D8M;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				MACOSX_DEPLOYMENT_TARGET = 14.6;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = singlefile;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = UITesting;
+		};
 		2C2167162EEC7399004A2529 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -460,7 +475,7 @@
 				CODE_SIGN_ENTITLEMENTS = TinyAI/TinyAI.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 72;
+				CURRENT_PROJECT_VERSION = 76;
 				DEVELOPMENT_TEAM = Y29LYS5D8M;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -474,7 +489,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.56;
+				MARKETING_VERSION = 1.60;
 				PRODUCT_BUNDLE_IDENTIFIER = IT.TinyAI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -494,7 +509,7 @@
 				CODE_SIGN_ENTITLEMENTS = TinyAI/TinyAI.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 72;
+				CURRENT_PROJECT_VERSION = 76;
 				DEVELOPMENT_TEAM = Y29LYS5D8M;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -508,7 +523,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.56;
+				MARKETING_VERSION = 1.60;
 				PRODUCT_BUNDLE_IDENTIFIER = IT.TinyAI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -520,6 +535,30 @@
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
+		};
+		2C21671F2EEC7399004A2529 /* UITesting */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = TinyAI/TinyAI.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 76;
+				DEVELOPMENT_TEAM = Y29LYS5D8M;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TinyAI/Info.plist;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				MACOSX_DEPLOYMENT_TARGET = 14.6;
+				MARKETING_VERSION = 1.60;
+				PRODUCT_BUNDLE_IDENTIFIER = IT.TinyAI.UITesting;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 5.0;
+			};
+			name = UITesting;
 		};
 		2C2167192EEC7399004A2529 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -563,6 +602,23 @@
 			};
 			name = Release;
 		};
+		2C2167202EEC7399004A2529 /* UITesting */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Y29LYS5D8M;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = IT.TinyAITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TinyAI.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TinyAI";
+			};
+			name = UITesting;
+		};
 		2C21671C2EEC7399004A2529 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -601,6 +657,22 @@
 			};
 			name = Release;
 		};
+		2C2167212EEC7399004A2529 /* UITesting */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Y29LYS5D8M;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = IT.TinyAIUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = TinyAI;
+			};
+			name = UITesting;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -609,6 +681,7 @@
 			buildConfigurations = (
 				2C2167132EEC7399004A2529 /* Debug */,
 				2C2167142EEC7399004A2529 /* Release */,
+				2C21671E2EEC7399004A2529 /* UITesting */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -618,6 +691,7 @@
 			buildConfigurations = (
 				2C2167162EEC7399004A2529 /* Debug */,
 				2C2167172EEC7399004A2529 /* Release */,
+				2C21671F2EEC7399004A2529 /* UITesting */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -627,6 +701,7 @@
 			buildConfigurations = (
 				2C2167192EEC7399004A2529 /* Debug */,
 				2C21671A2EEC7399004A2529 /* Release */,
+				2C2167202EEC7399004A2529 /* UITesting */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -636,6 +711,7 @@
 			buildConfigurations = (
 				2C21671C2EEC7399004A2529 /* Debug */,
 				2C21671D2EEC7399004A2529 /* Release */,
+				2C2167212EEC7399004A2529 /* UITesting */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

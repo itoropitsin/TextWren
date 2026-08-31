@@ -50,8 +50,23 @@ struct PreparedRichText: @unchecked Sendable {
 /// that a built-in translation must not change.
 struct RichTextStructureSignature: Equatable, Sendable {
     let blocks: [String]
+    let listGroups: [String]
     let links: [String]
     let inlineTraits: [String]
+
+    // Keep the old memberwise construction available to internal callers and
+    // tests that predate list-group validation.
+    init(
+        blocks: [String],
+        listGroups: [String] = [],
+        links: [String],
+        inlineTraits: [String]
+    ) {
+        self.blocks = blocks
+        self.listGroups = listGroups
+        self.links = links
+        self.inlineTraits = inlineTraits
+    }
 }
 
 enum RichTextHTMLSanitizer {
@@ -308,6 +323,22 @@ enum RichTextConverter {
         return prepared(attributed: attributed)
     }
 
+    /// Prepare an attributed selection supplied by Accessibility or another
+    /// native editor.  Normalize it through the same path as HTML/RTF so the
+    /// plain fallback receives visible list markers while the canonical rich
+    /// representations keep real NSTextList semantics.
+    static func prepare(attributed: NSAttributedString) -> PreparedRichText {
+        let withPrivateMarkers = replacingPrivateUseListMarkers(in: attributed)
+        let withoutDuplicateMarkers = normalizedListMarkers(in: withPrivateMarkers)
+        let withSemanticFonts = normalizedFonts(in: withoutDuplicateMarkers, baseFont: defaultFont)
+        let canonical = applyingBaseAttributesIfMissing(
+            to: normalizedColors(in: withSemanticFonts, baseColor: defaultColor),
+            baseFont: defaultFont,
+            baseColor: defaultColor
+        )
+        return prepared(attributed: canonical)
+    }
+
     /// Prepare a sanitized HTML response.  A non-HTML response is rejected so
     /// callers can use the Markdown/text fallback deliberately.
     static func prepare(html: String) -> PreparedRichText? {
@@ -341,7 +372,16 @@ enum RichTextConverter {
             baseFont: defaultFont,
             baseColor: defaultColor
         )
-        return prepared(attributed: canonical)
+        let prepared = prepared(attributed: canonical)
+        let html = prepared.payload.html.map {
+            preservingOriginalLinkDestinations(in: $0, sourceHTML: sanitized)
+        }
+        let payload = RichTextPayload(
+            plain: prepared.plain,
+            html: html,
+            rtf: prepared.payload.rtf
+        )
+        return PreparedRichText(attributed: prepared.attributed, payload: payload)
     }
 
     static func prepare(payload: RichTextPayload) -> PreparedRichText {
@@ -353,18 +393,21 @@ enum RichTextConverter {
             data: rtf,
             options: [.documentType: NSAttributedString.DocumentType.rtf],
             documentAttributes: nil
-           ) {
-            let withPrivateMarkers = replacingPrivateUseListMarkers(in: parsed)
-            let withoutDuplicateMarkers = normalizedListMarkers(in: withPrivateMarkers)
-            let withSemanticFonts = normalizedFonts(in: withoutDuplicateMarkers, baseFont: defaultFont)
-            let canonical = applyingBaseAttributesIfMissing(
-                to: normalizedColors(in: withSemanticFonts, baseColor: defaultColor),
-                baseFont: defaultFont,
-                baseColor: defaultColor
-            )
-            return prepared(attributed: canonical)
+            ) {
+            let prepared = prepare(attributed: parsed)
+            if !prepared.plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || payload.plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return prepared
+            }
         }
-        return prepare(markdown: payload.plain.normalizedPlainText())
+
+        // A payload with no usable rich representation came from ordinary
+        // text (or from a malformed rich clipboard item). Keep it literal;
+        // parsing Markdown here would invent hidden link destinations that
+        // the source application never supplied.
+        return prepare(
+            attributed: NSAttributedString(string: payload.plain.normalizedPlainText())
+        )
     }
 
     static func attributedString(from payload: RichTextPayload) -> NSAttributedString {
@@ -399,20 +442,23 @@ enum RichTextConverter {
                 let body = String(line[match.separatorRange.upperBound...])
                 result.append(inlineAttributedString(body))
                 let depth = listDepth(in: line, marker: match)
-                if depth < listStack.count {
-                    listStack.removeLast(listStack.count - depth)
+                let markerFormat: NSTextList.MarkerFormat = match.kind == .ordered ? .decimal : .disc
+
+                // Keep one NSTextList instance for a contiguous run of items.
+                // Recreating it for every line produces a different list id in
+                // RTF. Slack then treats the first item as a paragraph when it
+                // pastes the result into an existing editor selection.
+                let requiredListCount = depth + 1
+                if listStack.count > requiredListCount {
+                    listStack.removeLast(listStack.count - requiredListCount)
                 }
-                if listStack.count == depth {
-                    listStack.append(NSTextList(
-                        markerFormat: match.kind == .ordered ? .decimal : .disc,
-                        options: 0
-                    ))
-                } else if listStack[depth].markerFormat != (match.kind == .ordered ? .decimal : .disc) {
+                if listStack.count < requiredListCount {
+                    while listStack.count < requiredListCount {
+                        listStack.append(NSTextList(markerFormat: markerFormat, options: 0))
+                    }
+                } else if listStack[depth].markerFormat != markerFormat {
                     listStack.removeLast(listStack.count - depth)
-                    listStack.append(NSTextList(
-                        markerFormat: match.kind == .ordered ? .decimal : .disc,
-                        options: 0
-                    ))
+                    listStack.append(NSTextList(markerFormat: markerFormat, options: 0))
                 }
                 applyListStyle(
                     to: result,
@@ -456,6 +502,54 @@ enum RichTextConverter {
         prepare(markdown: markdown).payload
     }
 
+    /// Return true only when the attributed text carries formatting that is
+    /// otherwise invisible in its plain string.  A generated HTML wrapper is
+    /// not enough: ordinary text and hand-written Markdown must continue to
+    /// use the existing text request path.
+    static func containsSemanticFormatting(in attributed: NSAttributedString) -> Bool {
+        guard attributed.length > 0 else { return false }
+
+        var found = false
+        attributed.enumerateAttributes(
+            in: NSRange(location: 0, length: attributed.length),
+            options: []
+        ) { attributes, range, stop in
+            if attributes[.link] != nil {
+                found = true
+                stop.pointee = true
+                return
+            }
+
+            if let style = attributes[.paragraphStyle] as? NSParagraphStyle,
+               !style.textLists.isEmpty {
+                found = true
+                stop.pointee = true
+                return
+            }
+
+            if let font = attributes[.font] as? NSFont {
+                let traits = font.fontDescriptor.symbolicTraits
+                if traits.contains(.bold) || traits.contains(.italic) || traits.contains(.monoSpace) {
+                    found = true
+                    stop.pointee = true
+                }
+            }
+        }
+        return found
+    }
+
+    /// Return the canonical HTML input for a model only when it contains
+    /// semantic formatting.  The caller can use the existing Markdown/text
+    /// request path for plain input.
+    static func modelHTML(from prepared: PreparedRichText) -> String? {
+        guard containsSemanticFormatting(in: prepared.attributed),
+              let html = prepared.payload.html?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !html.isEmpty else {
+            return nil
+        }
+        return html
+    }
+
     static func normalizedMarkdown(_ raw: String, replacingPrivateUseMarkers: Bool = true) -> String {
         let normalizedNewlines = raw
             .replacingOccurrences(of: "\r\n", with: "\n")
@@ -488,6 +582,11 @@ enum RichTextConverter {
 
     static func structureSignature(of attributed: NSAttributedString) -> RichTextStructureSignature {
         var blocks: [String] = []
+        var listGroupTokens: [String] = []
+        var listGroups: [ObjectIdentifier: Int] = [:]
+        var nextListGroup = 0
+        var inlineTraits: [String] = []
+        var previousParagraphWasCode = false
         var location = 0
         while location < attributed.length {
             let paragraphRange = (attributed.string as NSString).paragraphRange(
@@ -500,23 +599,70 @@ enum RichTextConverter {
                 with: NSRange(location: paragraphRange.location, length: contentLength)
             )
             let style = attributed.attribute(.paragraphStyle, at: paragraphRange.location, effectiveRange: nil) as? NSParagraphStyle
+            let isCodeParagraph = style?.textLists.isEmpty != false
+                && attributed.attribute(.font, at: paragraphRange.location, effectiveRange: nil)
+                    .flatMap { ($0 as? NSFont)?.fontDescriptor.symbolicTraits.contains(.monoSpace) } == true
+
             if let list = style?.textLists.last {
                 let kind = list.markerFormat == .decimal ? "ordered" : "unordered"
                 let depth = max(1, style?.textLists.count ?? 1)
+                let objectID = ObjectIdentifier(list)
+                let group = listGroups[objectID] ?? {
+                    let value = nextListGroup
+                    nextListGroup += 1
+                    listGroups[objectID] = value
+                    return value
+                }()
                 blocks.append("list:\(kind):\(depth):\(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "empty" : "item")")
+                listGroupTokens.append("\(kind):\(depth):group\(group)")
             } else if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 blocks.append("blank")
+                listGroupTokens.append("none")
             } else {
-                let isCode = attributed.attribute(.font, at: paragraphRange.location, effectiveRange: nil)
-                    .flatMap { ($0 as? NSFont)?.fontDescriptor.symbolicTraits.contains(.monoSpace) } ?? false
-                let block = isCode ? "code" : "paragraph"
+                let block = isCodeParagraph ? "code" : "paragraph"
                 // Adjacent monospaced paragraphs are one code block for the
                 // purpose of validation; AppKit may split or merge their line
                 // ranges while round-tripping HTML/RTF.
                 if block != "code" || blocks.last != "code" {
                     blocks.append(block)
+                    listGroupTokens.append("none")
                 }
             }
+
+            // Preserve the order of semantic font runs within each paragraph.
+            // A separator between paragraphs catches a bold/italic span moved
+            // to a different paragraph while remaining insensitive to changed
+            // word lengths after translation. Adjacent code paragraphs are
+            // intentionally coalesced for the same round-trip tolerance used
+            // by `blocks` above.
+            if contentLength > 0 {
+                let contentRange = NSRange(location: paragraphRange.location, length: contentLength)
+                var paragraphTraits: [String] = []
+                attributed.enumerateAttribute(.font, in: contentRange, options: []) { value, _, _ in
+                    guard let font = value as? NSFont else { return }
+                    let traits = font.fontDescriptor.symbolicTraits
+                    var parts: [String] = []
+                    if traits.contains(.monoSpace) { parts.append("mono") }
+                    if traits.contains(.bold) { parts.append("bold") }
+                    if traits.contains(.italic) { parts.append("italic") }
+                    let key = parts.isEmpty ? "plain" : parts.joined(separator: "+")
+                    if paragraphTraits.last != key {
+                        paragraphTraits.append(key)
+                    }
+                }
+
+                if !paragraphTraits.isEmpty {
+                    if isCodeParagraph && previousParagraphWasCode {
+                        for key in paragraphTraits where inlineTraits.last != key {
+                            inlineTraits.append(key)
+                        }
+                    } else {
+                        if !inlineTraits.isEmpty { inlineTraits.append("|") }
+                        inlineTraits.append(contentsOf: paragraphTraits)
+                    }
+                }
+            }
+            previousParagraphWasCode = isCodeParagraph
             location = NSMaxRange(paragraphRange)
         }
 
@@ -534,29 +680,12 @@ enum RichTextConverter {
             }
         }
 
-        var traitCounts: [String: Int] = [:]
-        if attributed.length > 0 {
-            attributed.enumerateAttribute(.font, in: NSRange(location: 0, length: attributed.length), options: []) { value, _, _ in
-                guard let font = value as? NSFont else {
-                    return
-                }
-                let traits = font.fontDescriptor.symbolicTraits
-                var parts: [String] = []
-                if traits.contains(.monoSpace) { parts.append("mono") }
-                if traits.contains(.bold) { parts.append("bold") }
-                if traits.contains(.italic) { parts.append("italic") }
-                if !parts.isEmpty {
-                    let key = parts.joined(separator: "+")
-                    // Counts are intentionally presence flags.  AppKit may
-                    // merge adjacent code paragraphs into one run when it
-                    // parses the HTML again; that is not a structure change.
-                    traitCounts[key] = 1
-                }
-            }
-        }
-
-        let inlineTraits = traitCounts.keys.sorted().map { "\($0):\(traitCounts[$0] ?? 0)" }
-        return RichTextStructureSignature(blocks: blocks, links: links, inlineTraits: inlineTraits)
+        return RichTextStructureSignature(
+            blocks: blocks,
+            listGroups: listGroupTokens,
+            links: links,
+            inlineTraits: inlineTraits
+        )
     }
 
     private static func normalizedLink(_ value: String) -> String {
@@ -650,6 +779,107 @@ enum RichTextConverter {
         return normalizedMarkdown(plain, replacingPrivateUseMarkers: false)
     }
 
+    /// Return whether an attributed selection contains text that is useful to
+    /// translate.  URLs, domains, file paths and monospaced code are carried
+    /// through unchanged; they must not cause a needless model request (or
+    /// influence automatic language detection) when they are the whole
+    /// selection.
+    static func containsHumanReadableProse(in attributed: NSAttributedString) -> Bool {
+        guard attributed.length > 0 else { return false }
+
+        var visible = ""
+        attributed.enumerateAttributes(
+            in: NSRange(location: 0, length: attributed.length),
+            options: []
+        ) { attributes, range, _ in
+            if let font = attributes[.font] as? NSFont,
+               font.fontDescriptor.symbolicTraits.contains(.monoSpace) {
+                return
+            }
+            visible += (attributed.string as NSString).substring(with: range)
+        }
+
+        // Strip URL/domain/path-shaped tokens before looking for words. Keep
+        // ordinary linked labels such as "Read the guide" so they remain
+        // translatable, while a selection containing only a link is a no-op.
+        if let regex = try? NSRegularExpression(
+            pattern: "(?i)\\b(?:https?://|ftp://|www\\.)\\S+|\\b(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?:/\\S*)?|(?<!\\w)/[^\\s]+",
+            options: []
+        ) {
+            let range = NSRange(visible.startIndex..<visible.endIndex, in: visible)
+            visible = regex.stringByReplacingMatches(in: visible, options: [], range: range, withTemplate: " ")
+        }
+
+        let technicalPunctuation = CharacterSet(charactersIn: "/\\=<>()[\\]{}")
+        for token in visible.split(whereSeparator: { $0.isWhitespace }) {
+            let word = String(token).trimmingCharacters(in: .punctuationCharacters)
+            let letters = word.unicodeScalars.filter { CharacterSet.letters.contains($0) }
+            guard letters.count >= 2 else { continue }
+            if word.unicodeScalars.contains(where: { technicalPunctuation.contains($0) }) {
+                continue
+            }
+            return true
+        }
+        return false
+    }
+
+    /// NSTextView does not draw NSTextList markers for a non-editable text
+    /// view. Add display-only markers while keeping the canonical attributed
+    /// string unchanged so HTML/RTF/Replace never receive duplicate bullets.
+    static func displayAttributedString(from prepared: PreparedRichText) -> NSAttributedString {
+        displayAttributedString(from: prepared.attributed)
+    }
+
+    static func displayAttributedString(from attributed: NSAttributedString) -> NSAttributedString {
+        guard attributed.length > 0 else { return attributed }
+
+        let mutable = NSMutableAttributedString(attributedString: attributed)
+        var counters: [Int: Int] = [:]
+        var activeLists: [Int: ObjectIdentifier] = [:]
+        var insertions: [(location: Int, text: String, attributes: [NSAttributedString.Key: Any])] = []
+        var location = 0
+
+        while location < attributed.length {
+            let paragraphRange = (attributed.string as NSString).paragraphRange(
+                for: NSRange(location: location, length: 0)
+            )
+            let style = attributed.attribute(.paragraphStyle, at: paragraphRange.location, effectiveRange: nil) as? NSParagraphStyle
+            if let list = style?.textLists.last {
+                let depth = max(0, (style?.textLists.count ?? 1) - 1)
+                for key in Array(counters.keys) where key > depth {
+                    counters.removeValue(forKey: key)
+                }
+                for key in Array(activeLists.keys) where key > depth {
+                    activeLists.removeValue(forKey: key)
+                }
+
+                let listID = ObjectIdentifier(list)
+                if activeLists[depth] != listID {
+                    counters[depth] = 1
+                    activeLists[depth] = listID
+                }
+                let ordered = list.markerFormat == .decimal
+                let number = counters[depth, default: 1]
+                counters[depth] = ordered ? number + 1 : number
+                let marker = ordered ? "\(number)." : "•"
+                let attributes = attributed.attributes(at: paragraphRange.location, effectiveRange: nil)
+                insertions.append((paragraphRange.location, "\(marker) ", attributes))
+            } else {
+                counters.removeAll()
+                activeLists.removeAll()
+            }
+            location = NSMaxRange(paragraphRange)
+        }
+
+        for insertion in insertions.reversed() {
+            mutable.insert(
+                NSAttributedString(string: insertion.text, attributes: insertion.attributes),
+                at: insertion.location
+            )
+        }
+        return mutable
+    }
+
     private static func prepared(attributed: NSAttributedString) -> PreparedRichText {
         let canonical = applyingBaseAttributesIfMissing(
             to: normalizedColors(in: normalizedFonts(in: attributed, baseFont: defaultFont), baseColor: defaultColor),
@@ -665,11 +895,59 @@ enum RichTextConverter {
         return PreparedRichText(attributed: canonical, payload: payload)
     }
 
+    /// AppKit's HTML importer canonicalizes some URL strings (for example,
+    /// `https://example.com` becomes `https://example.com/`). Keep the source
+    /// attribute text for each link while still using the imported attributed
+    /// string to normalize lists, fonts, colours and paragraph boundaries.
+    private static func preservingOriginalLinkDestinations(in generatedHTML: String, sourceHTML: String) -> String {
+        let destinations = linkDestinations(in: sourceHTML)
+        guard !destinations.isEmpty else { return generatedHTML }
+
+        guard let anchorRegex = try? NSRegularExpression(
+            pattern: "(<a\\b[^>]*?\\bhref\\s*=\\s*\\\")([^\\\"]*)(\\\")",
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else {
+            return generatedHTML
+        }
+        let generatedRange = NSRange(generatedHTML.startIndex..<generatedHTML.endIndex, in: generatedHTML)
+        let matches = anchorRegex.matches(in: generatedHTML, options: [], range: generatedRange)
+        guard !matches.isEmpty else { return generatedHTML }
+
+        var result = generatedHTML
+        for (index, match) in matches.enumerated().reversed() {
+            guard index < destinations.count,
+                  let valueRange = Range(match.range(at: 2), in: result) else {
+                continue
+            }
+            result.replaceSubrange(valueRange, with: destinations[index])
+        }
+        return result
+    }
+
+    private static func linkDestinations(in html: String) -> [String] {
+        guard let regex = try? NSRegularExpression(
+            pattern: "<a\\b[^>]*?\\bhref\\s*=\\s*(?:\\\"([^\\\"]*)\\\"|'([^']*)'|([^\\s>]+))",
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else {
+            return []
+        }
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        return regex.matches(in: html, options: [], range: range).compactMap { match in
+            for index in 1...3 {
+                if let valueRange = Range(match.range(at: index), in: html) {
+                    return String(html[valueRange])
+                }
+            }
+            return nil
+        }
+    }
+
     private static func plainText(from attributed: NSAttributedString) -> String {
         guard attributed.length > 0 else { return "" }
 
         var result = ""
         var counters: [Int: Int] = [:]
+        var activeLists: [Int: ObjectIdentifier] = [:]
         var location = 0
         while location < attributed.length {
             let paragraphRange = (attributed.string as NSString).paragraphRange(
@@ -686,6 +964,19 @@ enum RichTextConverter {
                 for key in Array(counters.keys) where key > depth {
                     counters.removeValue(forKey: key)
                 }
+                for key in Array(activeLists.keys) where key > depth {
+                    activeLists.removeValue(forKey: key)
+                }
+
+                // Ordered numbering belongs to a concrete NSTextList. Reset
+                // the counter when a list changes type or starts after a
+                // paragraph; otherwise a sequence such as "1. one", "- two",
+                // "1. three" would incorrectly render the last item as "2.".
+                let listID = ObjectIdentifier(list)
+                if activeLists[depth] != listID {
+                    counters[depth] = 1
+                    activeLists[depth] = listID
+                }
                 let ordered = list.markerFormat == .decimal
                 let number = counters[depth, default: 1]
                 counters[depth] = ordered ? number + 1 : number
@@ -693,6 +984,7 @@ enum RichTextConverter {
                 result += indent + (ordered ? "\(number). " : "• ") + content
             } else {
                 counters.removeAll()
+                activeLists.removeAll()
                 result += content
             }
 
@@ -713,9 +1005,20 @@ enum RichTextConverter {
             result += "<li>\(block.content)"
             index += 1
 
-            if index < blocks.count, blocks[index].depth > depth {
+            // A nested run may switch between unordered and ordered lists, and
+            // malformed/hand-authored Markdown can jump more than one indent
+            // level. Consume every deeper run here rather than assuming the
+            // next depth is exactly `depth + 1`; that assumption used to emit
+            // an empty list and leave the real items outside their parent.
+            while index < blocks.count, blocks[index].depth > depth {
                 let nested = blocks[index]
-                result += renderHTMLList(blocks, index: &index, depth: depth + 1, kind: nested.kind)
+                let nestedIndex = index
+                result += renderHTMLList(blocks, index: &index, depth: nested.depth, kind: nested.kind)
+                if index == nestedIndex {
+                    // Keep the renderer total even if a future block kind is
+                    // added without a matching renderer.
+                    break
+                }
             }
             result += "</li>"
         }
@@ -1038,11 +1341,21 @@ enum RichTextPasteboard {
             ?? pasteboard.data(forType: .html).flatMap { String(data: $0, encoding: .utf8) }
         if let rawHTML,
            let prepared = RichTextConverter.prepare(html: rawHTML) {
-            return RichTextPayload(
-                plain: prepared.plain,
-                html: prepared.payload.html,
-                rtf: rtf ?? prepared.payload.rtf
-            )
+            // Keep all three representations from the same normalized
+            // attributed string.  Reusing the source application's RTF here
+            // would let its fonts, weights, and paragraph metadata leak into
+            // a later Replace even though the HTML has already been cleaned.
+            return prepared.payload
+        }
+
+        // Some native editors publish RTF together with HTML that AppKit
+        // cannot parse completely. Preserve the native formatting before
+        // falling back to a plain string in that case.
+        if let rtf {
+            let prepared = RichTextConverter.prepare(payload: RichTextPayload(plain: "", html: nil, rtf: rtf))
+            if !prepared.plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return prepared.payload
+            }
         }
 
         if let plainString = pasteboard.string(forType: .string) {
@@ -1051,11 +1364,6 @@ enum RichTextPasteboard {
                 html: nil,
                 rtf: rtf
             )
-        }
-
-        if let rtf {
-            let prepared = RichTextConverter.prepare(payload: RichTextPayload(plain: "", html: nil, rtf: rtf))
-            return prepared.payload
         }
 
         return nil
@@ -1068,18 +1376,22 @@ enum RichTextPasteboard {
         let rtf = payload.rtf ?? attributed.flatMap(RichTextConverter.rtf(from:))
         let html = payload.html.map(RichTextHTMLSanitizer.sanitize) ?? attributed.flatMap(RichTextConverter.html(from:))
 
-        pasteboard.clearContents()
-
-        if let rtf {
-            pasteboard.setData(rtf, forType: .rtf)
-        }
+        // Publish all representations on one item. Web editors can choose the
+        // HTML representation while native editors can choose RTF, without
+        // seeing separate clipboard items or mixing unrelated selections.
+        let item = NSPasteboardItem()
         if let html, let data = html.data(using: .utf8) {
-            pasteboard.setData(data, forType: .html)
+            item.setData(data, forType: .html)
+        }
+        pasteboard.clearContents()
+        if let rtf {
+            item.setData(rtf, forType: .rtf)
         }
 
         // Keep the canonical plain fallback with visible bullets/numbers.  The
         // HTML and RTF representations carry true list semantics; this string
         // is for applications that understand neither representation.
-        pasteboard.setString(payload.plain, forType: .string)
+        item.setString(payload.plain, forType: .string)
+        pasteboard.writeObjects([item])
     }
 }

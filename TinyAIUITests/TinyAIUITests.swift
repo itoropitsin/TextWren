@@ -7,6 +7,13 @@
 
 import XCTest
 
+func tinyAITestApplication() -> XCUIApplication {
+    let app = XCUIApplication()
+    app.launchArguments.append("--ui-testing")
+    app.launchEnvironment["TINYAI_TEST_MODE"] = "1"
+    return app
+}
+
 final class TinyAIUITests: XCTestCase {
 
     override func setUpWithError() throws {
@@ -24,8 +31,7 @@ final class TinyAIUITests: XCTestCase {
 
     @MainActor
     func testExample() throws {
-        let app = XCUIApplication()
-        app.launchArguments += ["--ui-testing"]
+        let app = tinyAITestApplication()
         app.launch()
 
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
@@ -40,8 +46,7 @@ final class TinyAIUITests: XCTestCase {
 
     @MainActor
     func testSettingsCancelKeepsDraftChangesOutOfTheLiveWindow() throws {
-        let app = XCUIApplication()
-        app.launchArguments += ["--ui-testing"]
+        let app = tinyAITestApplication()
         app.launch()
 
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 5))
@@ -53,10 +58,34 @@ final class TinyAIUITests: XCTestCase {
     }
 
     @MainActor
+    func testTextEditingShortcutsWorkInTestMode() throws {
+        let app = tinyAITestApplication()
+        app.launch()
+
+        let source = app.textViews.firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 5))
+        source.click()
+        source.typeText("Interface smoke test")
+
+        // The test launch arguments disable TinyAI's global event tap, so the
+        // editor keeps ownership of the normal editing shortcuts.
+        source.typeKey("a", modifierFlags: .command)
+        source.typeKey("c", modifierFlags: .command)
+        source.typeText("replacement")
+        source.typeKey("a", modifierFlags: .command)
+        source.typeKey("v", modifierFlags: .command)
+
+        XCTAssertEqual(source.value as? String, "Interface smoke test")
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+            let app = tinyAITestApplication()
+            app.launch()
+            app.terminate()
         }
     }
 }
