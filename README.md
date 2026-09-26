@@ -10,9 +10,10 @@ prompts on any text, either in its own window or right where you are typing.
   and back, including when you paste into Slack, Notes or Google Docs.
 - **Up to five custom actions** such as Grammar, Summarize or "Create task", each with its own
   model and reasoning level.
-- **Voice.** Dictate into any app with a local speech model or OpenAI, ask your remote agents
-  (HTTP APIs or MCP servers) by voice and hear the answer, or talk live with GPT-Live-1 while it
-  uses your tools. A menu bar icon shows what is happening.
+- **Voice dictation.** Hold a shortcut and speak into any app, with a local speech model (audio
+  stays on your Mac) or OpenAI. A menu bar icon and popup show what is happening.
+- **Agents and live conversation (Beta).** Ask remote agents (HTTP APIs or MCP servers) by voice
+  and hear the answer, or talk live with GPT-Live-1 while it uses your tools.
 
 ## Requirements
 
@@ -68,7 +69,9 @@ Settings are applied when you press **Save**; **Cancel** discards the changes.
 ### Dictation
 
 Hold **⌥Space** and speak, or tap it to start and tap again to stop; **Esc** cancels. The text is
-pasted where the cursor was, and your clipboard is put back afterwards. Change the shortcut and
+pasted where the cursor was, and your clipboard is put back afterwards. If no text field has focus,
+the text appears in the popup under the menu bar icon with a **Copy** button. Shortcuts use the
+physical key, so they work in any keyboard layout (⌃V and ⌃М are the same shortcut). Change the shortcut and
 engine in **Settings → Voice**:
 
 | Engine | Model | Good for |
@@ -83,7 +86,11 @@ Local models are the ones Handy uses, run with transcribe.cpp on the Mac's GPU. 
 **Settings → Voice**; each file is checked against a pinned SHA-256 and stored in
 `~/Library/Application Support/TinyAI/Models`. Audio for local models never leaves the Mac.
 
-### Agents
+### Agents (Beta)
+
+Agents and live conversation are a beta. Turn them on in **Help → Agents and live conversation
+(Beta)**; this adds the **Agents** and **Live** tabs to Settings and their shortcuts to the menu
+bar.
 
 **Settings → Agents** has two lists:
 
@@ -100,7 +107,7 @@ Hold an agent's shortcut and ask. The answer can appear in a floating panel, be 
 cursor, be copied, and be spoken with an OpenAI voice (with a style prompt) or a macOS voice.
 Requests wait up to the connection's timeout, so agents can think before answering.
 
-### Live conversation
+### Live conversation (Beta)
 
 **Settings → Live** sets a shortcut that starts and ends a full-duplex conversation with
 **GPT-Live-1**. It keeps talking while its backend model (for example GPT-6 Luna) reasons and
@@ -110,8 +117,12 @@ on the Mac with each connection's sign-in. The transcript can be shown in a pane
 ### Menu bar
 
 The menu bar icon shows the state: ready, recording (red, pulsing), transcribing, an agent
-thinking, speaking, live, or an error. Its menu starts dictation, agents or a live conversation,
-cancels the current one, shows the last answer and the model download progress.
+thinking, speaking, live, or an error (orange). While you record, a popup under the icon shows the
+microphone level and the text as it is recognised; errors appear there too.
+
+The menu starts dictation (and, with the beta on, agents or a live conversation), cancels the
+current one, lists the **five most recent transcripts** (click one to copy it), shows the last
+agent answer and the model download progress.
 
 ### Custom actions
 
@@ -164,6 +175,8 @@ Model output has em dashes (—) replaced with hyphens (-); code is left unchang
 - Local speech engine: `scripts/fetch_transcribe_cpp.sh` downloads the pinned transcribe.cpp
   framework into `Vendor/` (the build script and the Xcode build phase run it). The local-engine
   tests in `TinyAITests/VoiceFeatureTests.swift` run only when the model files are downloaded.
+- Voice logs: `/usr/bin/log show --last 5m --predicate 'subsystem == "IT.TinyAI"' --style compact`
+  shows hotkeys, recording level, transcripts and failures.
 - Voice flow: `VoiceCoordinator` (hotkeys → recording → transcription → dictation, agents, live),
   `MCPClient`, `OAuthBrowserAuthorizer`, `HTTPAgentClient`, and the GPT-Live wire format in
   `LiveProtocol`.

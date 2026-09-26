@@ -148,6 +148,7 @@ struct MainTranslationView: View {
         }
         .sheet(isPresented: $showHelp) {
             HelpView()
+                .environmentObject(voiceStore)
         }
         .alert("Error", isPresented: Binding(
             get: { translationService.errorMessage != nil },

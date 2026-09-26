@@ -155,14 +155,16 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             #selector(toggleDictation)
         )
         menu.addItem(dictation)
-        for agent in store.agents {
+        for agent in store.agents where store.agentsBetaEnabled {
             let item = actionItem(recordingTitle("Ask \(agent.name)", trigger: .agent(agent.id), hotkey: agent.hotkey),
                                   #selector(toggleAgent(_:)))
             item.representedObject = agent.id
             menu.addItem(item)
         }
-        let liveTitle = coordinator.isLiveActive ? "End Live Conversation" : "Start Live Conversation"
-        menu.addItem(actionItem(liveTitle + (store.live.hotkey.map { "  \($0.displayString)" } ?? ""), #selector(toggleLive)))
+        if store.agentsBetaEnabled || coordinator.isLiveActive {
+            let liveTitle = coordinator.isLiveActive ? "End Live Conversation" : "Start Live Conversation"
+            menu.addItem(actionItem(liveTitle + (store.live.hotkey.map { "  \($0.displayString)" } ?? ""), #selector(toggleLive)))
+        }
         menu.addItem(.separator())
 
         let engineTitle: String

@@ -12,6 +12,11 @@ final class VoiceSettingsStore: ObservableObject {
     static let keychainService = "IT.TinyAI"
 
     @Published private(set) var configuration: VoiceConfiguration
+    static let agentsBetaKey = "AgentsBetaEnabledV1"
+    /// Agents and live conversation are a beta, off until enabled in Help.
+    @Published var agentsBetaEnabled: Bool {
+        didSet { defaults.set(agentsBetaEnabled, forKey: Self.agentsBetaKey) }
+    }
 
     private let defaults: UserDefaults
     private let keychain: KeychainClient
@@ -24,6 +29,7 @@ final class VoiceSettingsStore: ObservableObject {
     init(defaults: UserDefaults = TinyAIRuntime.userDefaults, keychain: KeychainClient = KeychainStore.client) {
         self.defaults = defaults
         self.keychain = keychain
+        agentsBetaEnabled = defaults.bool(forKey: Self.agentsBetaKey)
         configuration = VoiceConfiguration(
             transcription: Self.decode(TranscriptionSettings.self, key: Self.transcriptionKey, defaults: defaults)
                 ?? TranscriptionSettings(),

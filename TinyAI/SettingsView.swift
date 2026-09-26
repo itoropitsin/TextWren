@@ -47,7 +47,7 @@ struct SettingsView: View {
             // A custom segmented header: the system TabView tab bar collapses
             // into overlapping, truncated labels in this sheet on macOS 27.
             Picker("", selection: $selectedTab) {
-                ForEach(SettingsTab.allCases, id: \.self) { tab in
+                ForEach(SettingsTab.allCases.filter { voiceStore.agentsBetaEnabled || !$0.isAgentsBeta }, id: \.self) { tab in
                     Label(tab.title, systemImage: tab.systemImage).tag(tab)
                 }
             }
@@ -770,6 +770,9 @@ private enum SettingsTab: Hashable, CaseIterable {
     case voice
     case agents
     case live
+
+    /// Hidden until agents are enabled in Help.
+    var isAgentsBeta: Bool { self == .agents || self == .live }
 
     var title: String {
         switch self {

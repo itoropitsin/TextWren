@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HelpView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var voiceStore: VoiceSettingsStore
 
     private var appVersion: String {
         let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
@@ -42,6 +43,23 @@ struct HelpView: View {
                         HelpBullet("Paste or type into **Source text**. Results update shortly after you stop typing.")
                         HelpBullet("Pick a language in the menu, or **Auto** to switch between your main and additional languages.")
                         HelpBullet("Formatting is kept: lists, links, bold, italic and code.")
+                    }
+
+                    HelpSection(title: "Voice dictation", systemImage: "mic.fill") {
+                        HelpBullet("Hold **⌥Space** and speak, or tap it to start and tap again to stop. **Esc** cancels. Change the shortcut in **Settings → Voice**.")
+                        HelpBullet("The text is pasted where the cursor is. With no text field focused, it appears in the popup under the menu bar icon with **Copy**.")
+                        HelpBullet("Choose a local model (audio stays on your Mac) or OpenAI in **Settings → Voice**. The menu bar icon keeps your last five transcripts.")
+                    }
+
+                    HelpSection(title: "Agents and live conversation (Beta)", systemImage: "person.wave.2.fill") {
+                        HelpBullet("Ask remote agents (HTTP APIs or MCP servers) by voice and hear the answer, or talk live with GPT-Live-1 while it uses your tools.")
+                        Toggle(isOn: $voiceStore.agentsBetaEnabled) {
+                            Text("Enable agents and live conversation")
+                        }
+                        .toggleStyle(.switch)
+                        Text("Adds the **Agents** and **Live** tabs to Settings. This is a beta and may change.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
 
                     HelpSection(title: "Custom actions", systemImage: "bolt.fill") {

@@ -172,6 +172,13 @@ final class VoiceCoordinator: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.applyHotkeys() }
             .store(in: &cancellables)
+        store.$agentsBetaEnabled
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { self?.applyHotkeys() }
+            }
+            .store(in: &cancellables)
         recentTranscripts = TinyAIRuntime.userDefaults.stringArray(forKey: Self.recentTranscriptsKey) ?? []
         prewarmMicrophone()
     }
@@ -217,12 +224,12 @@ final class VoiceCoordinator: ObservableObject {
         if let hotkey = store.transcription.dictationHotkey {
             registrations.append(VoiceHotkeyRegistration(id: VoiceTrigger.dictationHotkeyId, shortcut: hotkey.shortcut))
         }
-        for agent in store.agents {
+        for agent in store.agents where store.agentsBetaEnabled {
             if let hotkey = agent.hotkey {
                 registrations.append(VoiceHotkeyRegistration(id: VoiceTrigger.agent(agent.id).hotkeyId, shortcut: hotkey.shortcut))
             }
         }
-        if let hotkey = store.live.hotkey {
+        if store.agentsBetaEnabled, let hotkey = store.live.hotkey {
             registrations.append(VoiceHotkeyRegistration(id: VoiceTrigger.liveHotkeyId, shortcut: hotkey.shortcut))
         }
         logger.notice("Voice hotkeys: \(registrations.map { "\($0.id)=\($0.shortcut.displayString)" }.joined(separator: ", "), privacy: .public)")
