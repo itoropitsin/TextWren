@@ -865,8 +865,8 @@ struct TinyAITests {
 
 @MainActor
 struct ModelCatalogTests {
-    @Test func defaultModel_isGPT6LunaWithHighReasoning() {
-        #expect(ModelCatalog.defaultModel == LLMModel(provider: .openAI, name: "gpt-6-luna", reasoningEffort: .high))
+    @Test func defaultModel_isGPT6LunaWithLowReasoning() {
+        #expect(ModelCatalog.defaultModel == LLMModel(provider: .openAI, name: "gpt-6-luna", reasoningEffort: .low))
         #expect(TranslationService.defaultModel == ModelCatalog.defaultModel)
     }
 
@@ -1054,5 +1054,32 @@ struct RichTextSanitizerRegressionTests {
         let source = #"<p><a href="https://one.example">1</a></p>"#
         let generated = #"<p><a href="https://two.example/">2</a></p>"#
         #expect(RichTextConverter.preservingOriginalLinkDestinations(in: generated, sourceHTML: source) == generated)
+    }
+}
+
+@MainActor
+struct PromptTests {
+    @Test func translatePrompt_treatsInputAsContent_andLimitsStyleContext() {
+        let suite = "TinyAITests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let service = TranslationService(defaults: defaults)
+        service.saveActionStyleContext("You are working with Ivan - IT Team Lead")
+        service.saveActionStyleContextActionKeys([TranslationService.builtInTranslateSelectionKey])
+
+        let prompt = service.translateSystemPrompt(
+            languageMode: .automatic(main: "Russian", additional: "English"),
+            actionKey: TranslationService.builtInTranslateSelectionKey
+        )
+        #expect(prompt.contains(TranslationService.inputIsContentRule))
+        #expect(prompt.contains(TranslationService.actionStyleContextLabel + ":\nYou are working with Ivan"))
+        #expect(!prompt.contains("Additional style context"))
+    }
+
+    @Test func customActionInputHandling_keepsRequestsInsideTheText() {
+        let handling = TranslationService.customActionInputHandling
+        #expect(handling.contains("not a message to you"))
+        #expect(handling.contains("language of the input text"))
+        #expect(!handling.hasPrefix(" "))
     }
 }

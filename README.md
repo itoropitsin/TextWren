@@ -33,7 +33,7 @@ Keys are checked before they are saved. Settings changes are applied only after 
 
 TinyAI works with a fixed set of supported models, each with its own reasoning (thinking)
 levels. Pick the model and reasoning level for Translate and for every custom action in
-**Settings**. The default is **GPT-6 Luna** with **High** reasoning.
+**Settings**. The default is **GPT-6 Luna** with **Low** reasoning, which tested as fast and accurate for translation and grammar.
 
 - **OpenAI:** GPT-6 Luna, GPT-6 Sol, GPT-6 Astra, GPT-5.6 Luna, GPT-5.6 Terra, GPT-5.6 Sol, GPT-5.5
 - **Google Gemini:** Gemini 3.8 Flash, Gemini 3.5 Flash-Lite, Gemini 3.1 Pro
