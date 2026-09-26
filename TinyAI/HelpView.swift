@@ -38,7 +38,7 @@ struct HelpView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("1) Open Settings and paste an OpenAI or Google Gemini API key.")
                             Text("2) Choose what “Starred 1” does (built‑in Translate or one of your custom actions).")
-                            Text("3) Create custom actions: give each button a title, pick a model, and write a short prompt.")
+                            Text("3) Create custom actions: give each button a title, pick a model and reasoning level, and write a short prompt.")
                             Text("Tip: In the main window you can trigger custom actions with ⌘1, ⌘2, ⌘3, …")
                             Text("Tip: Use {{targetLanguage}} in prompts to reuse the language picker (for example: “Translate to {{targetLanguage}} and fix grammar.”).")
                         }

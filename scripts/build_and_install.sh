@@ -4,8 +4,8 @@ set -euo pipefail
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
 build_root="$(mktemp -d /tmp/TinyAI-build.XXXXXX)"
 app_bundle="$build_root/TinyAI.app"
-version="1.60"
-build_number="76"
+version="1.61"
+build_number="77"
 project_file="$project_root/TinyAI.xcodeproj/project.pbxproj"
 sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
 build_only="${1:-}"
@@ -104,6 +104,10 @@ swiftc \
   -sdk "$sdk_path" \
   -swift-version 5 \
   -parse-as-library \
+  -default-isolation MainActor \
+  -enable-upcoming-feature InferIsolatedConformances \
+  -enable-upcoming-feature NonisolatedNonsendingByDefault \
+  -enable-upcoming-feature MemberImportVisibility \
   -module-name TinyAI \
   -O \
   -o "$app_bundle/Contents/MacOS/TinyAI" \

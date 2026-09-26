@@ -244,7 +244,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissionPromptDefaultsKey = "PermissionPromptedVersionV1"
 
     func isFrontmostWindowFullscreen() -> Bool {
-        let systemWideElement = AXUIElementCreateSystemWide()
+        let systemWideElement = AccessibilityElements.systemWide()
 
         var focusedApp: AnyObject?
         let focusedAppResult = AXUIElementCopyAttributeValue(

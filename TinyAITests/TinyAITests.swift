@@ -124,7 +124,8 @@ struct TinyAITests {
 
         #expect(action.title == "Grammar")
         #expect(action.prompt == "Fix grammar while preserving formatting")
-        #expect(action.model == LLMModel(provider: .openAI, name: "gpt-5-mini"))
+        // A legacy bare OpenAI name is outside the supported catalog.
+        #expect(action.model == ModelCatalog.defaultModel)
 
         let encoded = try JSONEncoder().encode(action)
         let encodedString = String(data: encoded, encoding: .utf8) ?? ""
@@ -846,84 +847,6 @@ struct TinyAITests {
         #expect(prepared.plain == source.plain)
         #expect(RichTextConverter.structureSignature(of: prepared.attributed) == RichTextConverter.structureSignature(of: source.attributed))
     }
-
-    @Test func openAIModelFiltering_keepsTextModels_andDropsNonTextModels() {
-        #expect(TranslationService.isSupportedOpenAITextModel("gpt-4o"))
-        #expect(TranslationService.isSupportedOpenAITextModel("o3-mini"))
-        #expect(TranslationService.isSupportedOpenAITextModel("chatgpt-4o-latest"))
-        #expect(TranslationService.isSupportedOpenAITextModel("ft:gpt-4o-mini:org:custom:abc123"))
-        #expect(!TranslationService.isSupportedOpenAITextModel("gpt-4o-realtime-preview"))
-        #expect(!TranslationService.isSupportedOpenAITextModel("text-embedding-3-small"))
-        #expect(!TranslationService.isSupportedOpenAITextModel("dall-e-3"))
-    }
-
-    @Test func openAIModelParsing_returnsSupportedModels_andFiltersUnsupportedModels() throws {
-        let payload = """
-        {
-          "object": "list",
-          "data": [
-            {"id": "gpt-5.2"},
-            {"id": "o4-mini"},
-            {"id": "ft:gpt-4o-mini:org:custom:abc123"},
-            {"id": "gpt-4o-realtime-preview"},
-            {"id": "gpt-image-1"},
-            {"id": "text-embedding-3-small"},
-            {"id": "dall-e-3"}
-          ]
-        }
-        """.data(using: .utf8)!
-
-        let entries = try TranslationService.parseOpenAIModelEntries(payload)
-        let names = Set(entries.map(\.model.name))
-
-        #expect(names == Set([
-            "gpt-5.2",
-            "o4-mini",
-            "ft:gpt-4o-mini:org:custom:abc123"
-        ]))
-    }
-
-    @Test func modelCatalogMerge_addsVisibleUniqueModels_andPreservesExistingSettings() {
-        let existing = LLMModel(provider: .openAI, name: "gpt-5-mini")
-        let unavailable = LLMModel(provider: .openAI, name: "gpt-4o")
-        let newModel = LLMModel(provider: .openAI, name: "o4-mini")
-        let deleted = LLMModel(provider: .openAI, name: "gpt-4.1")
-
-        let result = TranslationService.mergeFetchedModels(
-            existing: [
-                LLMModelEntry(model: existing, displayName: existing.name),
-                LLMModelEntry(model: unavailable, displayName: unavailable.name)
-            ],
-            fetched: [
-                LLMModelEntry(model: existing, displayName: existing.name),
-                LLMModelEntry(model: newModel, displayName: newModel.name),
-                LLMModelEntry(model: newModel, displayName: newModel.name),
-                LLMModelEntry(model: deleted, displayName: deleted.name)
-            ],
-            visibility: [existing.key: false],
-            availability: [existing.key: true, unavailable.key: true],
-            provider: .openAI,
-            deletedKeys: [deleted.key]
-        )
-
-        #expect(result.models.map(\.model.key) == [existing.key, unavailable.key, newModel.key])
-        #expect(result.visibility[existing.key] == false)
-        #expect(result.visibility[newModel.key] == true)
-        #expect(result.availability[existing.key] == true)
-        #expect(result.availability[unavailable.key] == false)
-        #expect(result.availability[newModel.key] == true)
-        #expect(!result.models.contains { $0.model == deleted })
-    }
-
-    @Test func openAIModelParsing_returnsEmptyForOnlyUnsupportedModels() throws {
-        let payload = """
-        {"data": [{"id": "gpt-4o-realtime-preview"}, {"id": "text-embedding-3-small"}]}
-        """.data(using: .utf8)!
-
-        let entries = try TranslationService.parseOpenAIModelEntries(payload)
-        #expect(entries.isEmpty)
-    }
-
     @Test func popupHotkeyValidation_allowsDefaultDoubleCopy_butProtectsEditingShortcuts() {
         let copy = KeyboardShortcut(keyCode: 8, modifiers: [.command])
         #expect(KeyboardMonitor.validationError(for: copy, pressMode: .doublePress) == nil)
@@ -937,5 +860,199 @@ struct TinyAITests {
         #expect(MainTranslationView.processingDelay(for: "", newValue: "Pasted text") == 0.05)
         #expect(MainTranslationView.processingDelay(for: "one", newValue: "one\ntwo") == 0.05)
         #expect(MainTranslationView.processingDelay(for: "a", newValue: "ab") == 0.30)
+    }
+}
+
+@MainActor
+struct ModelCatalogTests {
+    @Test func defaultModel_isGPT6LunaWithHighReasoning() {
+        #expect(ModelCatalog.defaultModel == LLMModel(provider: .openAI, name: "gpt-6-luna", reasoningEffort: .high))
+        #expect(TranslationService.defaultModel == ModelCatalog.defaultModel)
+    }
+
+    @Test func catalog_containsOnlyGPT5Plus_andGemini3Plus() {
+        for entry in ModelCatalog.all {
+            switch entry.model.provider {
+            case .openAI:
+                #expect((LLMRequestPolicy.openAIGeneration(entry.model.name) ?? 0) >= 5)
+            case .gemini:
+                #expect((LLMRequestPolicy.geminiGeneration(entry.model.name) ?? 0) >= 3)
+            }
+            #expect(entry.reasoningEfforts.contains(entry.defaultReasoningEffort))
+        }
+        #expect(Set(ModelCatalog.all.map(\.id)).count == ModelCatalog.all.count)
+    }
+
+    @Test func resolve_mapsUnsupportedModelsToDefault_andClampsEffort() {
+        #expect(ModelCatalog.resolve(LLMModel(provider: .openAI, name: "gpt-4o")) == ModelCatalog.defaultModel)
+        #expect(ModelCatalog.resolve(LLMModel(provider: .gemini, name: "gemini-2.5-flash")) == ModelCatalog.defaultModel)
+
+        // Astra has no `none`, so the model default is used instead.
+        let astra = ModelCatalog.resolve(LLMModel(provider: .openAI, name: "gpt-6-astra", reasoningEffort: ReasoningEffort.none))
+        #expect(astra.reasoningEffort == .medium)
+
+        // A missing effort takes the model default; a valid one is kept.
+        #expect(ModelCatalog.resolve(LLMModel(provider: .gemini, name: "gemini-3.5-flash-lite")).reasoningEffort == .minimal)
+        #expect(ModelCatalog.resolve(LLMModel(provider: .openAI, name: "gpt-6-sol", reasoningEffort: .xhigh)).reasoningEffort == .xhigh)
+    }
+
+    @Test func llmModel_decodesStoredValuesWithoutEffort() throws {
+        let data = #"{"provider":"openai","name":"gpt-6-sol"}"#.data(using: .utf8)!
+        let model = try JSONDecoder().decode(LLMModel.self, from: data)
+        #expect(model.reasoningEffort == nil)
+        #expect(ModelCatalog.resolve(model).reasoningEffort == .medium)
+
+        let unknownEffort = #"{"provider":"openai","name":"gpt-6-sol","reasoningEffort":"turbo"}"#.data(using: .utf8)!
+        #expect(try JSONDecoder().decode(LLMModel.self, from: unknownEffort).reasoningEffort == nil)
+    }
+
+    @Test @MainActor func builtInTranslateModel_persistsReasoningEffort() {
+        let suite = "TinyAITests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let service = TranslationService(defaults: defaults)
+        #expect(service.builtInTranslateModel == ModelCatalog.defaultModel)
+        let selection = LLMModel(provider: .gemini, name: "gemini-3.8-flash", reasoningEffort: .low)
+        service.saveBuiltInTranslateModel(selection)
+
+        let reloaded = TranslationService(defaults: defaults)
+        #expect(reloaded.builtInTranslateModel == selection)
+    }
+
+    @Test @MainActor func legacyTranslateModelKey_migratesToDefault() {
+        let suite = "TinyAITests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("openai:gpt-5-mini", forKey: "BuiltInTranslateModelV1")
+        defaults.set(Data("[]".utf8), forKey: "LLMModelsV1")
+
+        let service = TranslationService(defaults: defaults)
+        #expect(service.builtInTranslateModel == ModelCatalog.defaultModel)
+        #expect(defaults.object(forKey: "LLMModelsV1") == nil)
+    }
+}
+
+@MainActor
+struct LLMRequestPolicyTests {
+    private func model(_ name: String, _ effort: ReasoningEffort?, _ provider: LLMProvider = .openAI) -> LLMModel {
+        LLMModel(provider: provider, name: name, reasoningEffort: effort)
+    }
+
+    @Test func modelGeneration_isParsedFromFamilyPrefix() {
+        #expect(LLMRequestPolicy.openAIGeneration("gpt-6-sol") == 6)
+        #expect(LLMRequestPolicy.openAIGeneration("ft:gpt-6-luna:org::abc") == 6)
+        #expect(LLMRequestPolicy.openAIGeneration("gpt-5.6-terra") == 5)
+        #expect(LLMRequestPolicy.openAIGeneration("gpt-4o") == 4)
+        #expect(LLMRequestPolicy.openAIGeneration("o3-mini") == nil)
+        #expect(LLMRequestPolicy.geminiGeneration("gemini-3.1-pro-preview") == 3)
+        #expect(LLMRequestPolicy.geminiGeneration("gemini-3.8-flash") == 3)
+        #expect(LLMRequestPolicy.geminiGeneration("gemini-2.5-flash") == 2)
+    }
+
+    @Test func gpt6_sendsSelectedEffort_toResponsesAPI_withoutTemperature() throws {
+        for (name, effort) in [("gpt-6-luna", ReasoningEffort.high), ("gpt-6-sol", .xhigh), ("gpt-6-astra", .low)] {
+            #expect(LLMRequestPolicy.usesOpenAIResponsesAPI(name))
+            let chat = LLMRequestPolicy.openAIChatBody(
+                model: model(name, effort), systemPrompt: "sys", userText: "Hello", preferredTemperature: 0.2
+            )
+            #expect(chat["temperature"] == nil)
+
+            let responses = try #require(LLMRequestPolicy.openAIResponsesBody(fromChatBody: chat))
+            let reasoning = try #require(responses["reasoning"] as? [String: String])
+            #expect(reasoning["effort"] == effort.rawValue)
+            #expect(responses["temperature"] == nil)
+        }
+    }
+
+    @Test func noneEffort_allowsTemperature() throws {
+        let chat = LLMRequestPolicy.openAIChatBody(
+            model: model("gpt-6-luna", ReasoningEffort.none), systemPrompt: "sys", userText: "Hello", preferredTemperature: 0.3
+        )
+        let responses = try #require(LLMRequestPolicy.openAIResponsesBody(fromChatBody: chat))
+        #expect((responses["reasoning"] as? [String: String])?["effort"] == "none")
+        #expect(responses["temperature"] as? Double == 0.3)
+    }
+
+    @Test func gemini3_sendsSelectedThinkingLevel_andDefaultTemperature() throws {
+        let config = LLMRequestPolicy.geminiGenerationConfig(
+            model: model("gemini-3.8-flash", .medium, .gemini), userText: "Hello", preferredTemperature: 0.2
+        )
+        let thinking = try #require(config["thinkingConfig"] as? [String: String])
+        #expect(thinking["thinkingLevel"] == "medium")
+        #expect(config["temperature"] == nil)
+
+        let lite = LLMRequestPolicy.geminiGenerationConfig(
+            model: model("gemini-3.5-flash-lite", .minimal, .gemini), userText: "Hello", preferredTemperature: 0.2
+        )
+        #expect((lite["thinkingConfig"] as? [String: String])?["thinkingLevel"] == "minimal")
+    }
+
+    @Test func outputBudget_growsWithInputAndEffort_withinBounds() {
+        let short = LLMRequestPolicy.outputTokenBudget(userText: "Hi", reasoningEffort: ReasoningEffort.none)
+        #expect(short == LLMRequestPolicy.minimumOutputTokens)
+
+        let high = LLMRequestPolicy.outputTokenBudget(userText: "Hi", reasoningEffort: .high)
+        #expect(high > LLMRequestPolicy.outputTokenBudget(userText: "Hi", reasoningEffort: .low))
+
+        let longText = String(repeating: "Длинный текст для перевода. ", count: 1000)
+        #expect(LLMRequestPolicy.outputTokenBudget(userText: longText, reasoningEffort: .low) > 1500 * 4)
+
+        let huge = String(repeating: "x", count: 1_000_000)
+        #expect(LLMRequestPolicy.outputTokenBudget(userText: huge, reasoningEffort: .max) == LLMRequestPolicy.maximumOutputTokens)
+    }
+}
+
+@MainActor
+struct RichTextSanitizerRegressionTests {
+    @Test func styleStripping_neverTouchesVisibleText() {
+        let html = #"<p style="color: red; font-weight: bold">Hair color: brown; eyes: blue</p><pre><code>body { font-family: Menlo; color: #333; }</code></pre>"#
+        let sanitized = RichTextHTMLSanitizer.sanitize(html)
+        #expect(sanitized.contains("Hair color: brown; eyes: blue"))
+        #expect(sanitized.contains("body { font-family: Menlo; color: #333; }"))
+        #expect(sanitized.contains(#"style="font-weight: bold""#))
+        #expect(!sanitized.contains("color: red"))
+    }
+
+    @Test func styleStripping_removesTypographyAttributesInsideTags() {
+        let html = #"<p><span style='font-family: Arial; font-size: 11pt'>x</span><font face="Arial" color="red">y</font><b color=red>z</b></p>"#
+        let sanitized = RichTextHTMLSanitizer.sanitize(html)
+        #expect(!sanitized.contains("font-family"))
+        #expect(!sanitized.contains("style="))
+        #expect(!sanitized.contains("face="))
+        #expect(!sanitized.contains("color="))
+        #expect(!sanitized.contains("<font"))
+        #expect(sanitized.contains("x") && sanitized.contains("y") && sanitized.contains("<b>z</b>"))
+    }
+
+    @Test func whitespaceOnlySpans_keepTheSpaceBetweenWords() {
+        let html = "<p><b>foo</b><span> </span><i>bar</i></p>"
+        #expect(RichTextHTMLSanitizer.sanitize(html).contains("<span> </span>"))
+    }
+
+    @Test func sanitizer_handlesDeeplyNestedClosingTagsQuickly() {
+        let nested = String(repeating: "</span>", count: 400)
+        let html = "<ul><li>• " + nested + "x</li></ul>" + String(repeating: "<div><span><b>t</b></span></div>", count: 2000)
+        let start = Date()
+        _ = RichTextHTMLSanitizer.sanitize(html)
+        #expect(Date().timeIntervalSince(start) < 2)
+    }
+
+    @Test func linkDestinations_areMatchedByURL_notByPosition() {
+        let source = #"<p><a href="https://example.com">a</a> <a href="https://b.example/x?q=1&amp;r=2">b</a> <a href='https://c.example/say"hi"'>c</a></p>"#
+        // The generator splits a partly bold link into two anchors, which
+        // shifted every later destination with positional matching.
+        let generated = #"<p><a href="https://example.com/">a</a><a href="https://example.com/"><b>a</b></a> <a href="https://b.example/x?q=1&amp;r=2">b</a> <a href="https://c.example/say%22hi%22">c</a></p>"#
+        let result = RichTextConverter.preservingOriginalLinkDestinations(in: generated, sourceHTML: source)
+        #expect(result.components(separatedBy: #"href="https://example.com""#).count == 3)
+        #expect(result.contains(#"href="https://b.example/x?q=1&amp;r=2""#))
+        #expect(result.contains(#"href="https://c.example/say&quot;hi&quot;""#))
+        #expect(!result.contains(#"href="https://c.example/say"hi""#))
+    }
+
+    @Test func linkDestinations_keepGeneratedURLWhenSourceHasNoMatch() {
+        let source = #"<p><a href="https://one.example">1</a></p>"#
+        let generated = #"<p><a href="https://two.example/">2</a></p>"#
+        #expect(RichTextConverter.preservingOriginalLinkDestinations(in: generated, sourceHTML: source) == generated)
     }
 }

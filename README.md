@@ -26,8 +26,19 @@ It works in two ways:
 2. Open **Settings** and paste an **OpenAI** or **Google Gemini API key**.
 3. Choose what **Starred 1** and **Starred 2** do (Translate or one of your custom actions).
 
-Keys are checked before they are saved. Settings changes, including model visibility and
-model deletion, are applied only after you press **Save**; **Cancel** discards the draft.
+Keys are checked before they are saved. Settings changes are applied only after you press
+**Save**; **Cancel** discards the draft.
+
+### Models
+
+TinyAI works with a fixed set of supported models, each with its own reasoning (thinking)
+levels. Pick the model and reasoning level for Translate and for every custom action in
+**Settings**. The default is **GPT-6 Luna** with **High** reasoning.
+
+- **OpenAI:** GPT-6 Luna, GPT-6 Sol, GPT-6 Astra, GPT-5.6 Luna, GPT-5.6 Terra, GPT-5.6 Sol, GPT-5.5
+- **Google Gemini:** Gemini 3.8 Flash, Gemini 3.5 Flash-Lite, Gemini 3.1 Pro
+
+Settings saved with a model that is no longer supported switch to the default model.
 
 ## Tips
 
@@ -75,5 +86,4 @@ If you just enabled it, quit and relaunch TinyAI.
 - Your API keys are stored locally in **macOS Keychain**.
 - TinyAI sends text only when a configured action runs. In the main window, editing the
   source starts the configured actions after a short pause; the popup sends selected text
-  when you open it. OpenAI and Gemini models are listed separately, and non-text OpenAI
-  models are hidden automatically.
+  when you open it.

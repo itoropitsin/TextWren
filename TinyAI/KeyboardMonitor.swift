@@ -4,7 +4,7 @@ import ApplicationServices
 import Combine
 import os
 
-enum PopupHotkeyPressMode: String, CaseIterable, Identifiable {
+nonisolated enum PopupHotkeyPressMode: String, CaseIterable, Identifiable, Sendable {
     case singlePress
     case doublePress
 
@@ -20,7 +20,7 @@ enum PopupHotkeyPressMode: String, CaseIterable, Identifiable {
     }
 }
 
-struct ShortcutModifiers: OptionSet, Equatable {
+nonisolated struct ShortcutModifiers: OptionSet, Equatable, Sendable {
     let rawValue: Int
 
     static let command = ShortcutModifiers(rawValue: 1 << 0)
@@ -69,7 +69,7 @@ struct ShortcutModifiers: OptionSet, Equatable {
     }
 }
 
-struct KeyboardShortcut: Equatable {
+nonisolated struct KeyboardShortcut: Equatable, Sendable {
     var keyCode: Int64
     var modifiers: ShortcutModifiers
 
@@ -105,25 +105,142 @@ struct KeyboardShortcut: Equatable {
     }
 }
 
+/// State shared between the main thread and the event-tap thread.  The tap
+/// callback runs on its own thread so a busy main thread (Accessibility
+/// calls, HTML import, pasteboard snapshots) never delays keystrokes in
+/// other applications; every field it reads or writes lives here.
+nonisolated private final class EventTapState: @unchecked Sendable {
+    struct Values {
+        var globalMonitoringEnabled = false
+        var isCustomActionHotkeysEnabled = false
+        var isAppActive = false
+        var popupHotkey = KeyboardShortcut(keyCode: 8, modifiers: [.command])
+        var popupHotkeyPressMode: PopupHotkeyPressMode = .doublePress
+        var isProcessing = false
+        var isProcessingCustomAction = false
+        var isSimulatingCopy = false
+        var lastPopupHotkeyPressTime: Date?
+        var pendingDoublePressPasteboardChangeCount: Int?
+    }
+
+    private let lock = NSLock()
+    private var values = Values()
+    private var tap: CFMachPort?
+
+    nonisolated func read<T>(_ keyPath: KeyPath<Values, T>) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return values[keyPath: keyPath]
+    }
+
+    @discardableResult
+    nonisolated func update<T>(_ body: (inout Values) -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(&values)
+    }
+
+    nonisolated var eventTap: CFMachPort? {
+        get { lock.lock(); defer { lock.unlock() }; return tap }
+        set { lock.lock(); tap = newValue; lock.unlock() }
+    }
+}
+
+/// A thread that only runs a run loop for the event-tap source.
+nonisolated private final class EventTapThread: Thread, @unchecked Sendable {
+    private let source: CFRunLoopSource
+    private let started = DispatchSemaphore(value: 0)
+    nonisolated(unsafe) private(set) var runLoop: CFRunLoop?
+
+    nonisolated init(source: CFRunLoopSource) {
+        self.source = source
+        super.init()
+        name = "TinyAI.EventTap"
+        qualityOfService = .userInteractive
+    }
+
+    nonisolated override func main() {
+        let current = CFRunLoopGetCurrent()
+        runLoop = current
+        CFRunLoopAddSource(current, source, .commonModes)
+        started.signal()
+        CFRunLoopRun()
+    }
+
+    /// Start the thread and wait until its run loop owns the source.
+    func startAndWait() {
+        start()
+        started.wait()
+    }
+
+    func stop() {
+        guard let runLoop else { return }
+        CFRunLoopRemoveSource(runLoop, source, .commonModes)
+        CFRunLoopStop(runLoop)
+    }
+}
+
+/// Accessibility requests go to other processes.  A short messaging timeout
+/// keeps a hung frontmost application from blocking TinyAI for the default
+/// of several seconds per request.
+enum AccessibilityElements {
+    static let messagingTimeout: Float = 0.5
+
+    static func systemWide() -> AXUIElement {
+        let element = AXUIElementCreateSystemWide()
+        // Setting the timeout on the system-wide element applies it to every
+        // element this process messages.
+        AXUIElementSetMessagingTimeout(element, messagingTimeout)
+        return element
+    }
+}
+
 class KeyboardMonitor: ObservableObject {
     var onPopupHotkey: ((RichTextPayload) -> Void)?
-    @Published var isCustomActionHotkeysEnabled: Bool = false
+    @Published var isCustomActionHotkeysEnabled: Bool = false {
+        didSet { tapState.update { $0.isCustomActionHotkeysEnabled = isCustomActionHotkeysEnabled } }
+    }
     @Published var customActionHotkey: Int?
-    @Published var popupHotkey: KeyboardShortcut
-    @Published var popupHotkeyPressMode: PopupHotkeyPressMode
-    
-    private var lastPopupHotkeyPressTime: Date?
-    private let doublePressInterval: TimeInterval = 0.5
-    private var pendingDoublePressPasteboardChangeCount: Int?
+    @Published var popupHotkey: KeyboardShortcut {
+        didSet { tapState.update { $0.popupHotkey = popupHotkey } }
+    }
+    @Published var popupHotkeyPressMode: PopupHotkeyPressMode {
+        didSet { tapState.update { $0.popupHotkeyPressMode = popupHotkeyPressMode } }
+    }
+
+    private let tapState = EventTapState()
+    private nonisolated let doublePressInterval: TimeInterval = 0.5
     private let pasteboardPollInterval: TimeInterval = 0.01
     private let pasteboardCopyTimeout: TimeInterval = 0.20
-    private(set) var globalMonitoringEnabled: Bool
-    private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var eventTapRunLoop: CFRunLoop?
-    private var isProcessing: Bool = false // Protection against multiple triggers
-    private var isProcessingCustomAction: Bool = false
-    private var isSimulatingCopy: Bool = false
+    private var eventTapThread: EventTapThread?
+    private var appActivationObservers: [NSObjectProtocol] = []
+
+    private(set) var globalMonitoringEnabled: Bool {
+        get { tapState.read(\.globalMonitoringEnabled) }
+        set { tapState.update { $0.globalMonitoringEnabled = newValue } }
+    }
+    private var eventTap: CFMachPort? {
+        get { tapState.eventTap }
+        set { tapState.eventTap = newValue }
+    }
+    // Protection against multiple triggers.
+    private var isProcessing: Bool {
+        get { tapState.read(\.isProcessing) }
+        set { tapState.update { $0.isProcessing = newValue } }
+    }
+    private var isProcessingCustomAction: Bool {
+        get { tapState.read(\.isProcessingCustomAction) }
+        set { tapState.update { $0.isProcessingCustomAction = newValue } }
+    }
+    private var isSimulatingCopy: Bool {
+        get { tapState.read(\.isSimulatingCopy) }
+        set { tapState.update { $0.isSimulatingCopy = newValue } }
+    }
+    private var pendingDoublePressPasteboardChangeCount: Int? {
+        get { tapState.read(\.pendingDoublePressPasteboardChangeCount) }
+        set { tapState.update { $0.pendingDoublePressPasteboardChangeCount = newValue } }
+    }
     private var eventTapSetupAttempted = false
     private var lastPermissionState: Bool
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TinyAI", category: "KeyboardMonitor")
@@ -132,7 +249,7 @@ class KeyboardMonitor: ObservableObject {
     private let popupHotkeyModifiersDefaultsKey = "PopupHotkeyModifiersV1"
     private let popupHotkeyPressModeDefaultsKey = "PopupHotkeyPressModeV1"
 
-    private static let customActionKeyCodeToIndex: [Int64: Int] = [
+    private nonisolated static let customActionKeyCodeToIndex: [Int64: Int] = [
         18: 1, // 1
         19: 2, // 2
         20: 3, // 3
@@ -141,13 +258,14 @@ class KeyboardMonitor: ObservableObject {
     ]
     
     init(globalMonitoringEnabled: Bool? = nil) {
+        let monitoringEnabled: Bool
         if let globalMonitoringEnabled {
-            self.globalMonitoringEnabled = globalMonitoringEnabled && !TinyAIRuntime.isTestEnvironment
+            monitoringEnabled = globalMonitoringEnabled && !TinyAIRuntime.isTestEnvironment
         } else {
-            self.globalMonitoringEnabled = !TinyAIRuntime.isTestEnvironment
+            monitoringEnabled = !TinyAIRuntime.isTestEnvironment
                 && TinyAIPermissions.allGranted
         }
-        self.lastPermissionState = self.globalMonitoringEnabled
+        self.lastPermissionState = monitoringEnabled
 
         let defaults = TinyAIRuntime.userDefaults
         let savedKeyCode = defaults.object(forKey: popupHotkeyKeyCodeDefaultsKey) as? Int64
@@ -160,6 +278,15 @@ class KeyboardMonitor: ObservableObject {
             modifiers: ShortcutModifiers(rawValue: savedModifiers ?? defaultHotkey.modifiers.rawValue)
         )
         popupHotkeyPressMode = PopupHotkeyPressMode(rawValue: savedPressModeRaw ?? "") ?? .doublePress
+        let initialHotkey = popupHotkey
+        let initialPressMode = popupHotkeyPressMode
+        tapState.update {
+            $0.globalMonitoringEnabled = monitoringEnabled
+            $0.popupHotkey = initialHotkey
+            $0.popupHotkeyPressMode = initialPressMode
+            $0.isAppActive = NSApp?.isActive ?? false
+        }
+        observeAppActivation()
 
         if savedKeyCode == nil || savedModifiers == nil {
             defaults.set(popupHotkey.keyCode, forKey: popupHotkeyKeyCodeDefaultsKey)
@@ -176,6 +303,7 @@ class KeyboardMonitor: ObservableObject {
     
     deinit {
         stopMonitoring()
+        appActivationObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
     func validatePopupHotkey(_ shortcut: KeyboardShortcut, pressMode: PopupHotkeyPressMode) -> String? {
@@ -328,7 +456,8 @@ class KeyboardMonitor: ObservableObject {
             options: .defaultTap,
             eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-                let monitor = Unmanaged<KeyboardMonitor>.fromOpaque(refcon!).takeUnretainedValue()
+                guard let refcon else { return Unmanaged.passUnretained(event) }
+                let monitor = Unmanaged<KeyboardMonitor>.fromOpaque(refcon).takeUnretainedValue()
                 return monitor.handleEvent(proxy: proxy, type: type, event: event)
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
@@ -346,104 +475,137 @@ class KeyboardMonitor: ObservableObject {
             return
         }
         
-        let currentRunLoop = CFRunLoopGetCurrent()
-        eventTapRunLoop = currentRunLoop
-        CFRunLoopAddSource(currentRunLoop, runLoopSource, .commonModes)
+        let thread = EventTapThread(source: runLoopSource)
+        thread.startAndWait()
+        eventTapThread = thread
         CGEvent.tapEnable(tap: eventTap, enable: true)
     }
 
-    private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        guard globalMonitoringEnabled else {
-            return Unmanaged.passUnretained(event)
-        }
-
+    /// Runs on the event-tap thread.  It only decides whether to pass or
+    /// swallow the event and hands any work to the main thread.
+    private nonisolated func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // Re-enable a tap the system disabled even while monitoring is
+        // paused; otherwise it stays dead after permissions come back.
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let eventTap {
+            if let eventTap = tapState.eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }
             return Unmanaged.passUnretained(event)
         }
 
-        if type == .keyDown {
-            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-            let flags = event.flags
+        guard type == .keyDown, tapState.read(\.globalMonitoringEnabled) else {
+            return Unmanaged.passUnretained(event)
+        }
 
-            // A held key generates repeated keyDown events. They must not trigger a
-            // second popup or custom action while the user is still holding the key.
-            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
-                return Unmanaged.passUnretained(event)
+        // A held key generates repeated keyDown events. They must not trigger a
+        // second popup or custom action while the user is still holding the key.
+        if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
+            return Unmanaged.passUnretained(event)
+        }
+
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let observedModifiers = ShortcutModifiers(eventFlags: event.flags)
+        let now = Date()
+        let doublePressInterval = self.doublePressInterval
+
+        enum Decision {
+            case pass
+            case passAndRecordFirstPress(reuseNaturalCopy: Bool)
+            case swallow
+            case customAction(Int)
+            case popup(previousPasteboardChangeCount: Int?, naturalCopyStartedAt: Date?)
+        }
+
+        let decision: Decision = tapState.update { state in
+            if state.isSimulatingCopy {
+                return .pass
             }
 
-            if isSimulatingCopy {
-                return Unmanaged.passUnretained(event)
+            if state.isCustomActionHotkeysEnabled && state.isAppActive && observedModifiers == [.command],
+               let index = Self.customActionKeyCodeToIndex[keyCode] {
+                guard !state.isProcessingCustomAction else { return .pass }
+                state.isProcessingCustomAction = true
+                return .customAction(index)
             }
 
-            let observedModifiers = ShortcutModifiers(eventFlags: flags)
+            guard keyCode == state.popupHotkey.keyCode && observedModifiers == state.popupHotkey.modifiers else {
+                return .pass
+            }
 
-            if isCustomActionHotkeysEnabled && NSApp.isActive && observedModifiers == [.command] {
-                if let index = Self.customActionKeyCodeToIndex[keyCode], !isProcessingCustomAction {
-                    isProcessingCustomAction = true
-                    DispatchQueue.main.async { [weak self] in
-                        self?.customActionHotkey = index
-                        DispatchQueue.main.async { [weak self] in
-                            self?.customActionHotkey = nil
-                        }
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                        self?.isProcessingCustomAction = false
-                    }
-                    return nil
+            switch state.popupHotkeyPressMode {
+            case .singlePress:
+                guard !state.isProcessing else { return .swallow }
+                state.isProcessing = true
+                return .popup(previousPasteboardChangeCount: nil, naturalCopyStartedAt: nil)
+            case .doublePress:
+                if let lastPress = state.lastPopupHotkeyPressTime,
+                   now.timeIntervalSince(lastPress) < doublePressInterval {
+                    let previousPasteboardChangeCount = state.pendingDoublePressPasteboardChangeCount
+                    state.lastPopupHotkeyPressTime = nil
+                    state.pendingDoublePressPasteboardChangeCount = nil
+                    guard !state.isProcessing else { return .swallow }
+                    state.isProcessing = true
+                    // Start the short grace period here, after the second
+                    // press has been observed. The first press may have
+                    // happened almost the full double-press interval ago.
+                    return .popup(previousPasteboardChangeCount: previousPasteboardChangeCount, naturalCopyStartedAt: now)
                 }
-            }
-            
-            if keyCode == popupHotkey.keyCode && observedModifiers == popupHotkey.modifiers {
-                let now = Date()
-                switch popupHotkeyPressMode {
-                case .singlePress:
-                    if !isProcessing {
-                        isProcessing = true
-                        DispatchQueue.main.async { [weak self] in
-                            self?.handlePopupHotkeyTriggered()
-                        }
-                    }
-                    return nil
-                case .doublePress:
-                    if let lastPress = lastPopupHotkeyPressTime,
-                       now.timeIntervalSince(lastPress) < doublePressInterval {
-                        let previousPasteboardChangeCount = pendingDoublePressPasteboardChangeCount
-                        // Start the short grace period here, after the second
-                        // press has been observed. The first press may have
-                        // happened almost the full double-press interval ago.
-                        let naturalCopyStartedAt = now
-                        lastPopupHotkeyPressTime = nil
-                        clearPendingDoublePressState()
-                        if !isProcessing {
-                            isProcessing = true
-                            DispatchQueue.main.async { [weak self] in
-                                self?.handlePopupHotkeyTriggered(
-                                    previousPasteboardChangeCount: previousPasteboardChangeCount,
-                                    naturalCopyStartedAt: naturalCopyStartedAt
-                                )
-                            }
-                        }
-                        return nil
-                    }
-
-                    lastPopupHotkeyPressTime = now
-                    let canReuseNaturalCopy = popupHotkey.keyCode == 8 && popupHotkey.modifiers == [.command]
-                    if canReuseNaturalCopy {
-                        pendingDoublePressPasteboardChangeCount = NSPasteboard.general.changeCount
-                    } else {
-                        clearPendingDoublePressState()
-                    }
-                    return Unmanaged.passUnretained(event)
+                state.lastPopupHotkeyPressTime = now
+                let reuseNaturalCopy = state.popupHotkey.keyCode == 8 && state.popupHotkey.modifiers == [.command]
+                if !reuseNaturalCopy {
+                    state.pendingDoublePressPasteboardChangeCount = nil
                 }
+                return .passAndRecordFirstPress(reuseNaturalCopy: reuseNaturalCopy)
             }
         }
-        
-        return Unmanaged.passUnretained(event)
+
+        switch decision {
+        case .pass:
+            return Unmanaged.passUnretained(event)
+        case .swallow:
+            return nil
+        case .passAndRecordFirstPress(let reuseNaturalCopy):
+            if reuseNaturalCopy {
+                let changeCount = NSPasteboard.general.changeCount
+                tapState.update { $0.pendingDoublePressPasteboardChangeCount = changeCount }
+            }
+            return Unmanaged.passUnretained(event)
+        case .customAction(let index):
+            DispatchQueue.main.async { [weak self] in
+                self?.customActionHotkey = index
+                DispatchQueue.main.async { [weak self] in
+                    self?.customActionHotkey = nil
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.isProcessingCustomAction = false
+            }
+            return nil
+        case .popup(let previousPasteboardChangeCount, let naturalCopyStartedAt):
+            DispatchQueue.main.async { [weak self] in
+                self?.handlePopupHotkeyTriggered(
+                    previousPasteboardChangeCount: previousPasteboardChangeCount,
+                    naturalCopyStartedAt: naturalCopyStartedAt
+                )
+            }
+            return nil
+        }
     }
-    
+
+    /// `NSApp.isActive` is main-thread only; the tap reads a mirrored value.
+    private func observeAppActivation() {
+        let center = NotificationCenter.default
+        let state = tapState
+        appActivationObservers = [
+            center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+                state.update { $0.isAppActive = true }
+            },
+            center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
+                state.update { $0.isAppActive = false }
+            }
+        ]
+    }
+
     private func handlePopupHotkeyTriggered(
         previousPasteboardChangeCount: Int? = nil,
         naturalCopyStartedAt: Date? = nil
@@ -743,7 +905,7 @@ class KeyboardMonitor: ObservableObject {
     }
 
     private func focusedUIElement() -> AXUIElement? {
-        let systemWideElement = AXUIElementCreateSystemWide()
+        let systemWideElement = AccessibilityElements.systemWide()
 
         var focusedElementValue: AnyObject?
         let focusedElementResult = AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElementValue)
@@ -799,16 +961,14 @@ class KeyboardMonitor: ObservableObject {
     
     func stopMonitoring() {
         globalMonitoringEnabled = false
-        if let runLoopSource = runLoopSource {
-            CFRunLoopRemoveSource(eventTapRunLoop ?? CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-        }
         if let eventTap = eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: false)
             CFMachPortInvalidate(eventTap)
         }
+        eventTapThread?.stop()
 
+        eventTapThread = nil
         runLoopSource = nil
-        eventTapRunLoop = nil
         eventTap = nil
     }
 }

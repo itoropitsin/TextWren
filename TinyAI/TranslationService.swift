@@ -26,29 +26,139 @@ enum LLMProvider: String, CaseIterable, Identifiable, Codable, Hashable {
     }
 }
 
+/// A model selection: the provider model plus the reasoning effort to run
+/// it with.  `key` identifies the model itself and ignores the effort.
 struct LLMModel: Codable, Hashable, Identifiable {
     var provider: LLMProvider
     var name: String
+    var reasoningEffort: ReasoningEffort?
+
+    init(provider: LLMProvider, name: String, reasoningEffort: ReasoningEffort? = nil) {
+        self.provider = provider
+        self.name = name
+        self.reasoningEffort = reasoningEffort
+    }
 
     var id: String { key }
     var key: String { "\(provider.rawValue):\(name)" }
+
+    /// The same model without an effort, for comparing against the catalog.
+    var base: LLMModel { LLMModel(provider: provider, name: name) }
+
+    func withReasoningEffort(_ effort: ReasoningEffort?) -> LLMModel {
+        LLMModel(provider: provider, name: name, reasoningEffort: effort)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case name
+        case reasoningEffort
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decode(LLMProvider.self, forKey: .provider)
+        name = try container.decode(String.self, forKey: .name)
+        // Unknown or missing values fall back to the catalog default later.
+        reasoningEffort = try? container.decodeIfPresent(ReasoningEffort.self, forKey: .reasoningEffort)
+    }
 }
 
-struct LLMModelEntry: Codable, Hashable, Identifiable {
-    var model: LLMModel
-    var displayName: String
+/// Reasoning / thinking effort.  OpenAI sends the raw value as
+/// `reasoning.effort`; Gemini 3 sends it as `thinkingLevel`.
+enum ReasoningEffort: String, Codable, CaseIterable, Identifiable {
+    case none
+    case minimal
+    case low
+    case medium
+    case high
+    case xhigh
+    case max
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .none: return "None"
+        case .minimal: return "Minimal"
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
+        case .xhigh: return "Extra high"
+        case .max: return "Max"
+        }
+    }
+}
+
+/// A model TinyAI supports, with the reasoning efforts the provider accepts
+/// for it.  Only catalog models can be selected.
+struct SupportedModel: Identifiable, Hashable {
+    let model: LLMModel
+    let displayName: String
+    let reasoningEfforts: [ReasoningEffort]
+    let defaultReasoningEffort: ReasoningEffort
 
     var id: String { model.key }
 
     var displayNameWithProvider: String {
         "\(model.provider.displayName): \(displayName)"
     }
+
+    /// The effort to send: the requested one when the model accepts it,
+    /// otherwise the model default.
+    func resolvedEffort(_ requested: ReasoningEffort?) -> ReasoningEffort {
+        guard let requested, reasoningEfforts.contains(requested) else {
+            return defaultReasoningEffort
+        }
+        return requested
+    }
 }
 
-struct LLMModelCatalogMergeResult {
-    var models: [LLMModelEntry]
-    var visibility: [String: Bool]
-    var availability: [String: Bool]
+enum ModelCatalog {
+    private static let openAIFullRange: [ReasoningEffort] = [.none, .low, .medium, .high, .xhigh, .max]
+
+    static let all: [SupportedModel] = [
+        // GPT-6
+        SupportedModel(model: LLMModel(provider: .openAI, name: "gpt-6-luna"), displayName: "GPT-6 Luna",
+                       reasoningEfforts: openAIFullRange, defaultReasoningEffort: .high),
+        SupportedModel(model: LLMModel(provider: .openAI, name: "gpt-6-sol"), displayName: "GPT-6 Sol",
+                       reasoningEfforts: openAIFullRange, defaultReasoningEffort: .medium),
+        SupportedModel(model: LLMModel(provider: .openAI, name: "gpt-6-astra"), displayName: "GPT-6 Astra",
+                       reasoningEfforts: [.low, .medium, .high, .xhigh, .max], defaultReasoningEffort: .medium),
+        // GPT-5
+        SupportedModel(model: LLMModel(provider: .openAI, name: "gpt-5.6-luna"), displayName: "GPT-5.6 Luna",
+                       reasoningEfforts: openAIFullRange, defaultReasoningEffort: .medium),
+        SupportedModel(model: LLMModel(provider: .openAI, name: "gpt-5.6-terra"), displayName: "GPT-5.6 Terra",
+                       reasoningEfforts: openAIFullRange, defaultReasoningEffort: .medium),
+        SupportedModel(model: LLMModel(provider: .openAI, name: "gpt-5.6-sol"), displayName: "GPT-5.6 Sol",
+                       reasoningEfforts: openAIFullRange, defaultReasoningEffort: .medium),
+        SupportedModel(model: LLMModel(provider: .openAI, name: "gpt-5.5"), displayName: "GPT-5.5",
+                       reasoningEfforts: [.none, .low, .medium, .high, .xhigh], defaultReasoningEffort: .medium),
+        // Gemini (latest of each line)
+        SupportedModel(model: LLMModel(provider: .gemini, name: "gemini-3.8-flash"), displayName: "Gemini 3.8 Flash",
+                       reasoningEfforts: [.low, .medium, .high], defaultReasoningEffort: .medium),
+        SupportedModel(model: LLMModel(provider: .gemini, name: "gemini-3.5-flash-lite"), displayName: "Gemini 3.5 Flash-Lite",
+                       reasoningEfforts: [.minimal, .low, .medium, .high], defaultReasoningEffort: .minimal),
+        SupportedModel(model: LLMModel(provider: .gemini, name: "gemini-3.1-pro-preview"), displayName: "Gemini 3.1 Pro",
+                       reasoningEfforts: [.low, .medium, .high], defaultReasoningEffort: .high)
+    ]
+
+    static let defaultModel = LLMModel(provider: .openAI, name: "gpt-6-luna", reasoningEffort: .high)
+
+    static func entry(for model: LLMModel) -> SupportedModel? {
+        all.first { $0.model.key == model.key }
+    }
+
+    static func models(for provider: LLMProvider) -> [SupportedModel] {
+        all.filter { $0.model.provider == provider }
+    }
+
+    /// Map any stored selection onto the catalog: unsupported models become
+    /// the default model, and the effort is made valid for the model.
+    static func resolve(_ model: LLMModel) -> LLMModel {
+        guard let entry = entry(for: model) else { return defaultModel }
+        return entry.model.withReasoningEffort(entry.resolvedEffort(model.reasoningEffort))
+    }
 }
 
 struct LLMKeyValidationError: LocalizedError, Equatable {
@@ -61,25 +171,6 @@ struct LLMKeyValidationError: LocalizedError, Equatable {
             return "\(provider.displayName) key validation failed (\(statusCode)): \(message)"
         }
         return "\(provider.displayName) key validation failed: \(message)"
-    }
-}
-
-enum OpenAIModel: String, CaseIterable, Identifiable, Codable {
-    case gpt52 = "gpt-5.2"
-    case gpt5Mini = "gpt-5-mini"
-    case gpt5Nano = "gpt-5-nano"
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .gpt52:
-            return "gpt-5.2"
-        case .gpt5Mini:
-            return "gpt-5-mini"
-        case .gpt5Nano:
-            return "gpt-5-nano"
-        }
     }
 }
 
@@ -113,10 +204,10 @@ struct CustomAction: Codable, Identifiable, Equatable {
         id = (try? container.decode(UUID.self, forKey: .id)) ?? UUID()
         title = (try? container.decode(String.self, forKey: .title)) ?? ""
         prompt = (try? container.decode(String.self, forKey: .prompt)) ?? ""
+        // Legacy values (a bare OpenAI model name) and models outside the
+        // supported catalog resolve to the catalog default.
         if let decoded = try? container.decode(LLMModel.self, forKey: .model) {
-            model = decoded
-        } else if let legacy = try? container.decode(OpenAIModel.self, forKey: .model) {
-            model = LLMModel(provider: .openAI, name: legacy.rawValue)
+            model = ModelCatalog.resolve(decoded)
         } else {
             model = TranslationService.defaultModel
         }
@@ -136,7 +227,7 @@ class TranslationService: ObservableObject {
         "Portuguese", "Chinese", "Japanese", "Korean", "Arabic", "Dutch",
         "Polish", "Turkish", "Swedish", "Norwegian", "Danish", "Finnish"
     ]
-    static let defaultModel = LLMModel(provider: .openAI, name: OpenAIModel.gpt5Mini.rawValue)
+    static let defaultModel = ModelCatalog.defaultModel
 
     @Published var apiKey: String = "" {
         didSet {
@@ -190,26 +281,11 @@ class TranslationService: ObservableObject {
 
     @Published var builtInTranslateModel: LLMModel = TranslationService.defaultModel {
         didSet {
-            defaults.set(builtInTranslateModel.key, forKey: builtInTranslateModelDefaultsKey)
+            if let data = try? JSONEncoder().encode(builtInTranslateModel) {
+                defaults.set(data, forKey: builtInTranslateModelDefaultsKeyV2)
+            }
         }
     }
-
-    @Published private(set) var llmModels: [LLMModelEntry] = []
-    @Published var llmModelVisibility: [String: Bool] = [:] {
-        didSet {
-            saveModelVisibilityToDefaults(llmModelVisibility)
-        }
-    }
-    @Published var llmModelAvailability: [String: Bool] = [:] {
-        didSet {
-            saveModelAvailabilityToDefaults(llmModelAvailability)
-        }
-    }
-
-    var deletedModelKeysForSettings: Set<String> {
-        deletedModelKeys
-    }
-
     @Published var preferredTargetLanguage: String = "English" {
         didSet {
             let normalized = normalizedLanguageSelection(preferredTargetLanguage)
@@ -279,7 +355,6 @@ class TranslationService: ObservableObject {
     private var legacyOpenAIKeyNeedsRemoval = false
 
     private let apiKeyDefaultsKey = "OpenAIAPIKey"
-    private let legacyModelDefaultsKey = "OpenAIModel"
     private let customActionsDefaultsKey = "CustomActionsV1"
     private let starredPrimaryDefaultsKey = "StarredPrimaryActionIdV1"
     private let starredSecondaryDefaultsKey = "StarredSecondaryActionIdV1"
@@ -291,11 +366,11 @@ class TranslationService: ObservableObject {
     private let actionStyleContextDefaultsKey = "ActionStyleContextV1"
     private let actionStyleContextActionKeysDefaultsKey = "ActionStyleContextActionKeysV1"
     private let preferredTargetLanguageDefaultsKey = "PreferredTargetLanguageV1"
-    private let llmModelsDefaultsKey = "LLMModelsV1"
-    private let llmModelVisibilityDefaultsKey = "LLMModelVisibilityV1"
-    private let llmModelAvailabilityDefaultsKey = "LLMModelAvailabilityV1"
-    private let deletedLLMModelsDefaultsKey = "DeletedLLMModelsV1"
-    private var deletedModelKeys: Set<String> = []
+    private let builtInTranslateModelDefaultsKeyV2 = "BuiltInTranslateModelV2"
+    /// Storage of the removed user-editable model catalog; cleared on launch.
+    private let legacyModelCatalogDefaultsKeys = [
+        "LLMModelsV1", "LLMModelVisibilityV1", "LLMModelAvailabilityV1", "DeletedLLMModelsV1"
+    ]
     
     init(keychainClient: KeychainClient? = nil, defaults: UserDefaults = TinyAIRuntime.userDefaults) {
         keychainService = "IT.TinyAI"
@@ -303,7 +378,7 @@ class TranslationService: ObservableObject {
         self.defaults = defaults
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 60
+        configuration.timeoutIntervalForResource = 120
         session = URLSession(configuration: configuration)
 
         isLoadingAPIKeys = true
@@ -317,12 +392,7 @@ class TranslationService: ObservableObject {
         isLoadingAPIKeys = false
 
         builtInTranslateModel = loadBuiltInTranslateModel()
-
-        llmModels = loadModelsFromDefaults()
-        llmModelVisibility = loadModelVisibilityFromDefaults()
-        llmModelAvailability = loadModelAvailabilityFromDefaults()
-        deletedModelKeys = Set(defaults.stringArray(forKey: deletedLLMModelsDefaultsKey) ?? [])
-        normalizeModelsAndVisibility()
+        legacyModelCatalogDefaultsKeys.forEach { defaults.removeObject(forKey: $0) }
 
         preferredTargetLanguage = normalizedLanguageSelection(
             defaults.string(forKey: preferredTargetLanguageDefaultsKey) ?? preferredTargetLanguage
@@ -480,41 +550,6 @@ class TranslationService: ObservableObject {
         return await validateAPIKey(trimmed, for: provider)
     }
 
-    @MainActor
-    func refreshModels(for provider: LLMProvider) async -> Result<Void, LLMKeyValidationError> {
-        let key = apiKey(for: provider).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else {
-            return .failure(LLMKeyValidationError(provider: provider, statusCode: nil, message: "API key is not set"))
-        }
-
-        do {
-            let fetched = try await fetchModels(provider: provider, apiKey: key)
-            applyFetchedModels(fetched, for: provider)
-            return .success(())
-        } catch let error as LLMKeyValidationError {
-            return .failure(error)
-        } catch {
-            return .failure(LLMKeyValidationError(provider: provider, statusCode: nil, message: error.localizedDescription))
-        }
-    }
-
-    /// Fetch models for the Settings draft without applying them to the live service.
-    @MainActor
-    func fetchModelsForSettings(for provider: LLMProvider, apiKey: String) async -> Result<[LLMModelEntry], LLMKeyValidationError> {
-        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return .failure(LLMKeyValidationError(provider: provider, statusCode: nil, message: "API key is not set"))
-        }
-
-        do {
-            return .success(try await fetchModels(provider: provider, apiKey: trimmed))
-        } catch let error as LLMKeyValidationError {
-            return .failure(error)
-        } catch {
-            return .failure(LLMKeyValidationError(provider: provider, statusCode: nil, message: error.localizedDescription))
-        }
-    }
-
     func saveCustomActions(_ actions: [CustomAction]) {
         customActions = normalizeCustomActions(actions)
         applyBuiltInDefaultsIfNeeded(force: false)
@@ -594,7 +629,11 @@ class TranslationService: ObservableObject {
     }
 
     private func normalizeCustomActions(_ actions: [CustomAction]) -> [CustomAction] {
-        var result = Array(actions.prefix(5))
+        var result = Array(actions.prefix(5)).map { action -> CustomAction in
+            var copy = action
+            copy.model = ModelCatalog.resolve(action.model)
+            return copy
+        }
         while result.count < 5 {
             result.append(CustomAction())
         }
@@ -639,7 +678,7 @@ class TranslationService: ObservableObject {
             return
         }
 
-        let defaultModel = resolveLegacyDefaultLLMModel()
+        let defaultModel = ModelCatalog.defaultModel
 
         let hasAnyConfigured = customActions.contains { action in
             !action.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -667,19 +706,6 @@ Rules:
         customActions[0].prompt = defaultGrammarPrompt
         customActions[0].model = defaultModel
     }
-
-    private func resolveLegacyDefaultModel() -> OpenAIModel {
-        if let savedLegacyModelRaw = defaults.string(forKey: legacyModelDefaultsKey),
-           let savedModel = OpenAIModel(rawValue: savedLegacyModelRaw) {
-            return savedModel
-        }
-        return .gpt5Mini
-    }
-
-    private func resolveLegacyDefaultLLMModel() -> LLMModel {
-        LLMModel(provider: .openAI, name: resolveLegacyDefaultModel().rawValue)
-    }
-
     @discardableResult
     private func persistAPIKey(_ value: String, provider: LLMProvider) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -764,19 +790,18 @@ Rules:
             geminiAPIKey = key
         }
     }
-
     private func loadBuiltInTranslateModel() -> LLMModel {
+        if let data = defaults.data(forKey: builtInTranslateModelDefaultsKeyV2),
+           let saved = try? JSONDecoder().decode(LLMModel.self, from: data) {
+            return ModelCatalog.resolve(saved)
+        }
+        // V1 stored "provider:name" (or a bare legacy OpenAI name) without
+        // an effort; unsupported models resolve to the catalog default.
         if let savedKey = defaults.string(forKey: builtInTranslateModelDefaultsKey),
            let parsed = parseModelKey(savedKey) {
-            return parsed
+            return ModelCatalog.resolve(parsed)
         }
-
-        if let savedLegacyModelRaw = defaults.string(forKey: builtInTranslateModelDefaultsKey),
-           let legacy = OpenAIModel(rawValue: savedLegacyModelRaw) {
-            return LLMModel(provider: .openAI, name: legacy.rawValue)
-        }
-
-        return resolveLegacyDefaultLLMModel()
+        return ModelCatalog.defaultModel
     }
 
     private func parseModelKey(_ key: String) -> LLMModel? {
@@ -789,325 +814,30 @@ Rules:
         return LLMModel(provider: provider, name: parts[1])
     }
 
-    var modelsForActionsPicker: [LLMModelEntry] {
-        let filtered = llmModels.filter { llmModelVisibility[$0.model.key] ?? true }
-        return filtered.sorted { $0.displayNameWithProvider.localizedCaseInsensitiveCompare($1.displayNameWithProvider) == .orderedAscending }
-    }
-
-    func modelsForActionsPickerIncluding(_ selection: LLMModel) -> [LLMModelEntry] {
-        var list = modelsForActionsPicker
-        if !list.contains(where: { $0.model == selection }) {
-            let fallbackName = llmModels.first(where: { $0.model == selection })?.displayName ?? selection.name
-            list.insert(LLMModelEntry(model: selection, displayName: fallbackName), at: 0)
-        }
-        return list
-    }
-
-    func setModelVisible(_ model: LLMModel, visible: Bool) {
-        llmModelVisibility[model.key] = visible
-    }
-
-    func isModelVisible(_ model: LLMModel) -> Bool {
-        llmModelVisibility[model.key] ?? true
-    }
-
-	    func isModelAvailable(_ model: LLMModel) -> Bool {
-	        llmModelAvailability[model.key] ?? true
-	    }
-
-	    private func displayNameWithProvider(for model: LLMModel) -> String {
-	        if let entry = llmModels.first(where: { $0.model == model }) {
-	            return entry.displayNameWithProvider
-	        }
-	        return "\(model.provider.displayName): \(model.name)"
-	    }
-
-	    private func guardModelAvailable(_ model: LLMModel, completion: @escaping (Result<String, Error>) -> Void) -> Bool {
-	        guard isModelAvailable(model) else {
-	            completion(.failure(TranslationError.modelUnavailable(displayNameWithProvider(for: model))))
-	            return false
-	        }
-	        return true
-	    }
-
-    func replacementCandidates(excluding model: LLMModel) -> [LLMModelEntry] {
-        llmModels
-            .filter { $0.model != model }
-            .filter { isModelAvailable($0.model) }
-            .sorted { $0.displayNameWithProvider.localizedCaseInsensitiveCompare($1.displayNameWithProvider) == .orderedAscending }
-    }
-
-    func deleteModel(_ model: LLMModel) {
-        guard llmModels.count > 1 else {
-            errorMessage = "Keep at least one model configured."
-            return
-        }
-
-        deletedModelKeys.insert(model.key)
-        defaults.set(Array(deletedModelKeys), forKey: deletedLLMModelsDefaultsKey)
-        llmModels.removeAll { $0.model == model }
-        llmModelVisibility.removeValue(forKey: model.key)
-        llmModelAvailability.removeValue(forKey: model.key)
-
-        if builtInTranslateModel == model {
-            builtInTranslateModel = Self.defaultModel
-        }
-
-        if customActions.contains(where: { $0.model == model }) {
-            let updated = customActions.map { action -> CustomAction in
-                if action.model == model {
-                    var copy = action
-                    copy.model = Self.defaultModel
-                    return copy
-                }
-                return action
-            }
-            customActions = updated
-        }
-
-        saveModelsToDefaults(llmModels)
-        saveModelVisibilityToDefaults(llmModelVisibility)
-        saveModelAvailabilityToDefaults(llmModelAvailability)
-    }
-
-    @MainActor
-    func commitModelCatalog(
-        models: [LLMModelEntry],
-        visibility: [String: Bool],
-        availability: [String: Bool],
-        deletedKeys: Set<String>
-    ) {
-        deletedModelKeys.formUnion(deletedKeys)
-        defaults.set(Array(deletedModelKeys), forKey: deletedLLMModelsDefaultsKey)
-
-        llmModels = Self.dedupModels(models).filter { !deletedModelKeys.contains($0.model.key) }
-        llmModelVisibility = visibility.filter { !deletedModelKeys.contains($0.key) }
-        llmModelAvailability = availability.filter { !deletedModelKeys.contains($0.key) }
-        normalizeModelsAndVisibility()
-    }
-
-    private func loadModelsFromDefaults() -> [LLMModelEntry] {
-        guard let data = defaults.data(forKey: llmModelsDefaultsKey),
-              let decoded = try? JSONDecoder().decode([LLMModelEntry].self, from: data) else {
-            return OpenAIModel.allCases.map { legacy in
-                LLMModelEntry(model: LLMModel(provider: .openAI, name: legacy.rawValue), displayName: legacy.displayName)
-            }
-        }
-        return decoded
-    }
-
-    private func saveModelsToDefaults(_ models: [LLMModelEntry]) {
-        guard let data = try? JSONEncoder().encode(models) else {
-            return
-        }
-        defaults.set(data, forKey: llmModelsDefaultsKey)
-    }
-
-    private func loadModelVisibilityFromDefaults() -> [String: Bool] {
-        guard let data = defaults.data(forKey: llmModelVisibilityDefaultsKey),
-              let decoded = try? JSONDecoder().decode([String: Bool].self, from: data) else {
-            return [:]
-        }
-        return decoded
-    }
-
-    private func saveModelVisibilityToDefaults(_ map: [String: Bool]) {
-        guard let data = try? JSONEncoder().encode(map) else {
-            return
-        }
-        defaults.set(data, forKey: llmModelVisibilityDefaultsKey)
-    }
-
-    private func loadModelAvailabilityFromDefaults() -> [String: Bool] {
-        guard let data = defaults.data(forKey: llmModelAvailabilityDefaultsKey),
-              let decoded = try? JSONDecoder().decode([String: Bool].self, from: data) else {
-            return [:]
-        }
-        return decoded
-    }
-
-    private func saveModelAvailabilityToDefaults(_ map: [String: Bool]) {
-        guard let data = try? JSONEncoder().encode(map) else {
-            return
-        }
-        defaults.set(data, forKey: llmModelAvailabilityDefaultsKey)
-    }
-
-    private func normalizeModelsAndVisibility() {
-        if llmModels.isEmpty {
-            llmModels = OpenAIModel.allCases.map { legacy in
-                LLMModelEntry(model: LLMModel(provider: .openAI, name: legacy.rawValue), displayName: legacy.displayName)
-            }
-        }
-
-        llmModels = llmModels
-            .filter { !deletedModelKeys.contains($0.model.key) }
-            .filter { entry in
-                entry.model.provider != .openAI || Self.isSupportedOpenAITextModel(entry.model.name)
-            }
-
-        var visibility = llmModelVisibility.filter { !deletedModelKeys.contains($0.key) }
-        var availability = llmModelAvailability.filter { !deletedModelKeys.contains($0.key) }
-        for entry in llmModels {
-            if visibility[entry.model.key] == nil {
-                visibility[entry.model.key] = true
-            }
-            if availability[entry.model.key] == nil {
-                availability[entry.model.key] = true
-            }
-        }
-        llmModelVisibility = visibility
-        llmModelAvailability = availability
-
-        llmModels = Self.dedupModels(llmModels)
-        saveModelsToDefaults(llmModels)
-    }
-
-    private static func dedupModels(_ models: [LLMModelEntry]) -> [LLMModelEntry] {
-        var seen: Set<String> = []
-        var result: [LLMModelEntry] = []
-        for entry in models {
-            if seen.insert(entry.model.key).inserted {
-                result.append(entry)
-            }
-        }
-        return result
-    }
-
-    private func applyFetchedModels(_ fetched: [LLMModelEntry], for provider: LLMProvider) {
-        let merged = Self.mergeFetchedModels(
-            existing: llmModels,
-            fetched: fetched,
-            visibility: llmModelVisibility,
-            availability: llmModelAvailability,
-            provider: provider,
-            deletedKeys: deletedModelKeys
-        )
-        llmModels = merged.models
-        llmModelVisibility = merged.visibility
-        llmModelAvailability = merged.availability
-
-        saveModelsToDefaults(llmModels)
-    }
-
-    static func mergeFetchedModels(
-        existing: [LLMModelEntry],
-        fetched: [LLMModelEntry],
-        visibility: [String: Bool],
-        availability: [String: Bool],
-        provider: LLMProvider,
-        deletedKeys: Set<String>
-    ) -> LLMModelCatalogMergeResult {
-        let existingModels = existing.filter { !deletedKeys.contains($0.model.key) }
-        let fetchedModels = fetched.filter {
-            $0.model.provider == provider && !deletedKeys.contains($0.model.key)
-        }
-
-        let existingKeys = Set(existingModels.map(\.model.key))
-        let mergedModels = Self.dedupModels(existingModels + fetchedModels)
-
-        var mergedVisibility = visibility.filter { !deletedKeys.contains($0.key) }
-        for entry in mergedModels where mergedVisibility[entry.model.key] == nil {
-            mergedVisibility[entry.model.key] = true
-        }
-        for entry in fetchedModels where !existingKeys.contains(entry.model.key) {
-            mergedVisibility[entry.model.key] = true
-        }
-
-        let fetchedKeys = Set(fetchedModels.map(\.model.key))
-        var mergedAvailability = availability.filter { !deletedKeys.contains($0.key) }
-        for entry in mergedModels where mergedAvailability[entry.model.key] == nil {
-            mergedAvailability[entry.model.key] = true
-        }
-        for entry in mergedModels where entry.model.provider == provider {
-            mergedAvailability[entry.model.key] = fetchedKeys.contains(entry.model.key)
-        }
-
-        return LLMModelCatalogMergeResult(
-            models: mergedModels,
-            visibility: mergedVisibility,
-            availability: mergedAvailability
-        )
-    }
-
+    /// A key is valid when the provider accepts it for listing models.
     private func validateAPIKey(_ key: String, for provider: LLMProvider) async -> Result<Void, LLMKeyValidationError> {
+        var request: URLRequest
+        switch provider {
+        case .openAI:
+            request = URLRequest(url: URL(string: "https://api.openai.com/v1/models")!)
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        case .gemini:
+            request = URLRequest(url: URL(string: "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1")!)
+            request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        }
+        request.httpMethod = "GET"
+
         do {
-            _ = try await fetchModels(provider: provider, apiKey: key)
+            let (data, response) = try await session.data(for: request)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode
+            guard statusCode == 200 else {
+                let message = (provider == .openAI ? parseOpenAIErrorMessage(from: data) : parseGeminiErrorMessage(from: data)) ?? "HTTP error"
+                return .failure(LLMKeyValidationError(provider: provider, statusCode: statusCode, message: message))
+            }
             return .success(())
-        } catch let error as LLMKeyValidationError {
-            return .failure(error)
         } catch {
             return .failure(LLMKeyValidationError(provider: provider, statusCode: nil, message: error.localizedDescription))
         }
-    }
-
-    private func fetchModels(provider: LLMProvider, apiKey: String) async throws -> [LLMModelEntry] {
-        switch provider {
-        case .openAI:
-            return try await fetchOpenAIModels(apiKey: apiKey)
-        case .gemini:
-            return try await fetchGeminiModels(apiKey: apiKey)
-        }
-    }
-
-    private struct OpenAIModelsResponse: Decodable {
-        struct Model: Decodable { let id: String }
-        let data: [Model]
-    }
-
-    private func fetchOpenAIModels(apiKey: String) async throws -> [LLMModelEntry] {
-        guard let url = URL(string: "https://api.openai.com/v1/models") else {
-            throw LLMKeyValidationError(provider: .openAI, statusCode: nil, message: "Invalid URL")
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
-        let (data, response) = try await session.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode
-        guard statusCode == 200 else {
-            let message = parseOpenAIErrorMessage(from: data) ?? "HTTP error"
-            throw LLMKeyValidationError(provider: .openAI, statusCode: statusCode, message: message)
-        }
-
-        return try Self.parseOpenAIModelEntries(data)
-    }
-
-    static func parseOpenAIModelEntries(_ data: Data) throws -> [LLMModelEntry] {
-        let decoded = try JSONDecoder().decode(OpenAIModelsResponse.self, from: data)
-        let entries = decoded.data
-            .filter { Self.isSupportedOpenAITextModel($0.id) }
-            .map { LLMModelEntry(model: LLMModel(provider: .openAI, name: $0.id), displayName: $0.id) }
-            .sorted { lhs, rhs in
-                lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
-            }
-        return entries
-    }
-
-    static func isSupportedOpenAITextModel(_ modelName: String) -> Bool {
-        let name = modelName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let baseName = name.hasPrefix("ft:") ? String(name.dropFirst(3)) : name
-        let hasTextFamilyPrefix = baseName.hasPrefix("gpt-")
-            || baseName.hasPrefix("o1")
-            || baseName.hasPrefix("o3")
-            || baseName.hasPrefix("o4")
-            || baseName.hasPrefix("chatgpt-")
-        guard hasTextFamilyPrefix else { return false }
-
-        let blockedFragments = [
-            "audio", "realtime", "image", "embedding", "dall-e", "whisper",
-            "moderation", "computer-use", "transcribe", "tts"
-        ]
-        return !blockedFragments.contains(where: { baseName.contains($0) })
-    }
-
-    private struct GeminiModelsResponse: Decodable {
-        struct Model: Decodable {
-            let name: String
-            let displayName: String?
-            let supportedGenerationMethods: [String]?
-        }
-        let models: [Model]?
     }
 
     private struct GeminiErrorResponse: Decodable {
@@ -1118,35 +848,6 @@ Rules:
         }
         let error: GeminiError
     }
-
-    private func fetchGeminiModels(apiKey: String) async throws -> [LLMModelEntry] {
-        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models?key=\(apiKey)") else {
-            throw LLMKeyValidationError(provider: .gemini, statusCode: nil, message: "Invalid URL")
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-
-        let (data, response) = try await session.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode
-        guard statusCode == 200 else {
-            let message = parseGeminiErrorMessage(from: data) ?? "HTTP error"
-            throw LLMKeyValidationError(provider: .gemini, statusCode: statusCode, message: message)
-        }
-
-        let decoded = try jsonDecoder.decode(GeminiModelsResponse.self, from: data)
-        let rawModels: [GeminiModelsResponse.Model] = decoded.models ?? []
-        let mapped: [LLMModelEntry] = rawModels
-            .filter { ($0.supportedGenerationMethods ?? []).contains("generateContent") }
-            .map { model in
-                let id = model.name.replacingOccurrences(of: "models/", with: "")
-                return LLMModelEntry(model: LLMModel(provider: .gemini, name: id), displayName: model.displayName ?? id)
-            }
-        let entries = mapped.sorted { lhs, rhs in
-            lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
-        }
-        return entries
-    }
-
     private func parseOpenAIErrorMessage(from data: Data) -> String? {
         if let apiError = try? jsonDecoder.decode(APIErrorResponse.self, from: data) {
             return apiError.error.message
@@ -1328,10 +1029,6 @@ Output only the translation.
         return prompt
     }
 
-    private func translateSystemPrompt(targetLanguage: String, actionKey: String?) -> String {
-        translateSystemPrompt(languageMode: .fixed(targetLanguage), actionKey: actionKey)
-    }
-
     private func translateHTMLSystemPrompt(languageMode: TranslationLanguageMode, actionKey: String?) -> String {
         var prompt = """
 You are a professional translator.
@@ -1358,10 +1055,6 @@ Rules:
             prompt += "\n\nAdditional style context:\n\(actionStyle)"
         }
         return prompt
-    }
-
-    private func translateHTMLSystemPrompt(targetLanguage: String, actionKey: String?) -> String {
-        translateHTMLSystemPrompt(languageMode: .fixed(targetLanguage), actionKey: actionKey)
     }
 
     private func translateHTMLToMarkdownSystemPrompt(languageMode: TranslationLanguageMode, actionKey: String?) -> String {
@@ -1391,10 +1084,6 @@ Rules:
             prompt += "\n\nAdditional style context:\n\(actionStyle)"
         }
         return prompt
-    }
-
-    private func translateHTMLToMarkdownSystemPrompt(targetLanguage: String, actionKey: String?) -> String {
-        translateHTMLToMarkdownSystemPrompt(languageMode: .fixed(targetLanguage), actionKey: actionKey)
     }
 
     private func grammarSystemPrompt() -> String {
@@ -1435,95 +1124,26 @@ Rules:
 """
     }
 
-    private func buildHTMLTranslateRequestBody(html: String, languageMode: TranslationLanguageMode, modelName: String, actionKey: String?) -> [String: Any] {
-        let systemPrompt = translateHTMLSystemPrompt(languageMode: languageMode, actionKey: actionKey)
-
-        var requestBody: [String: Any] = [
-            "model": modelName,
-            "messages": [
-                [
-                    "role": "system",
-                    "content": systemPrompt
-                ],
-                [
-                    "role": "user",
-                    "content": html
-                ]
-            ],
-            "max_completion_tokens": 1500
-        ]
-
-        if modelName == OpenAIModel.gpt52.rawValue {
-            requestBody["temperature"] = 0.2
-        }
-
-        return requestBody
-    }
-
-    private func buildHTMLTranslateRequestBody(html: String, targetLanguage: String, modelName: String, actionKey: String?) -> [String: Any] {
-        buildHTMLTranslateRequestBody(
-            html: html,
-            languageMode: .fixed(targetLanguage),
-            modelName: modelName,
-            actionKey: actionKey
+    private func buildHTMLTranslateRequestBody(html: String, languageMode: TranslationLanguageMode, model: LLMModel, actionKey: String?) -> [String: Any] {
+        buildChatRequestBody(
+            systemPrompt: translateHTMLSystemPrompt(languageMode: languageMode, actionKey: actionKey),
+            userText: html,
+            model: model,
+            temperature: 0.2
         )
     }
 
-    private func buildHTMLToMarkdownTranslateRequestBody(html: String, languageMode: TranslationLanguageMode, modelName: String, actionKey: String?) -> [String: Any] {
-        let systemPrompt = translateHTMLToMarkdownSystemPrompt(languageMode: languageMode, actionKey: actionKey)
-
-        var requestBody: [String: Any] = [
-            "model": modelName,
-            "messages": [
-                [
-                    "role": "system",
-                    "content": systemPrompt
-                ],
-                [
-                    "role": "user",
-                    "content": html
-                ]
-            ],
-            "max_completion_tokens": 1500
-        ]
-
-        if modelName == OpenAIModel.gpt52.rawValue {
-            requestBody["temperature"] = 0.2
-        }
-
-        return requestBody
-    }
-
-    private func buildHTMLToMarkdownTranslateRequestBody(html: String, targetLanguage: String, modelName: String, actionKey: String?) -> [String: Any] {
-        buildHTMLToMarkdownTranslateRequestBody(
-            html: html,
-            languageMode: .fixed(targetLanguage),
-            modelName: modelName,
-            actionKey: actionKey
+    private func buildHTMLToMarkdownTranslateRequestBody(html: String, languageMode: TranslationLanguageMode, model: LLMModel, actionKey: String?) -> [String: Any] {
+        buildChatRequestBody(
+            systemPrompt: translateHTMLToMarkdownSystemPrompt(languageMode: languageMode, actionKey: actionKey),
+            userText: html,
+            model: model,
+            temperature: 0.2
         )
     }
 
-    private func buildCustomActionRequestBody(text: String, prompt: String, modelName: String) -> [String: Any] {
-        var requestBody: [String: Any] = [
-            "model": modelName,
-            "messages": [
-                [
-                    "role": "system",
-                    "content": prompt
-                ],
-                [
-                    "role": "user",
-                    "content": text
-                ]
-            ],
-            "max_completion_tokens": 1500
-        ]
-
-        if modelName == OpenAIModel.gpt52.rawValue {
-            requestBody["temperature"] = 0.2
-        }
-
-        return requestBody
+    private func buildCustomActionRequestBody(text: String, prompt: String, model: LLMModel) -> [String: Any] {
+        buildChatRequestBody(systemPrompt: prompt, userText: text, model: model, temperature: 0.2)
     }
 
     private func actionStyleContextIfEnabled(forActionKey actionKey: String?) -> String? {
@@ -1544,104 +1164,47 @@ Rules:
         return "\(prompt)\n\nAdditional style context:\n\(actionStyle)"
     }
 
-    private func buildHTMLGrammarFixRequestBody(html: String, modelName: String) -> [String: Any] {
-        let systemPrompt = grammarHTMLSystemPrompt()
-
-        var requestBody: [String: Any] = [
-            "model": modelName,
-            "messages": [
-                [
-                    "role": "system",
-                    "content": systemPrompt
-                ],
-                [
-                    "role": "user",
-                    "content": html
-                ]
-            ],
-            "max_completion_tokens": 1500
-        ]
-
-        if modelName == OpenAIModel.gpt52.rawValue {
-            requestBody["temperature"] = 0.2
-        }
-
-        return requestBody
+    private func buildHTMLGrammarFixRequestBody(html: String, model: LLMModel) -> [String: Any] {
+        buildChatRequestBody(systemPrompt: grammarHTMLSystemPrompt(), userText: html, model: model, temperature: 0.2)
     }
 
     private func buildRequestBody(
         text: String,
         languageMode: TranslationLanguageMode,
-        modelName: String,
+        model: LLMModel,
         actionKey: String?
     ) -> [String: Any] {
-        let systemPrompt = translateSystemPrompt(
-            languageMode: languageMode,
-            actionKey: actionKey
-        )
-
-        var requestBody: [String: Any] = [
-            "model": modelName,
-            "messages": [
-                [
-                    "role": "system",
-                    "content": systemPrompt
-                ],
-                [
-                    "role": "user",
-                    "content": text
-                ]
-            ],
-            "max_completion_tokens": 1000
-        ]
-
-        if modelName == OpenAIModel.gpt52.rawValue {
-            requestBody["temperature"] = 0.3
-        }
-
-        return requestBody
-    }
-
-    private func buildRequestBody(text: String, targetLanguage: String, modelName: String, actionKey: String?) -> [String: Any] {
-        buildRequestBody(
-            text: text,
-            languageMode: .fixed(targetLanguage),
-            modelName: modelName,
-            actionKey: actionKey
+        buildChatRequestBody(
+            systemPrompt: translateSystemPrompt(languageMode: languageMode, actionKey: actionKey),
+            userText: text,
+            model: model,
+            temperature: 0.3
         )
     }
 
-    private func buildGrammarFixRequestBody(text: String, modelName: String) -> [String: Any] {
-        let systemPrompt = grammarSystemPrompt()
+    private func buildGrammarFixRequestBody(text: String, model: LLMModel) -> [String: Any] {
+        buildChatRequestBody(systemPrompt: grammarSystemPrompt(), userText: text, model: model, temperature: 0.2)
+    }
 
-        var requestBody: [String: Any] = [
-            "model": modelName,
-            "messages": [
-                [
-                    "role": "system",
-                    "content": systemPrompt
-                ],
-                [
-                    "role": "user",
-                    "content": text
-                ]
-            ],
-            "max_completion_tokens": 1000
-        ]
-
-        if modelName == OpenAIModel.gpt52.rawValue {
-            requestBody["temperature"] = 0.2
-        }
-
-        return requestBody
+    /// Single place where the Chat-style body is assembled.  Model-family
+    /// specific parameters (reasoning effort, sampling, output budget) come
+    /// from `LLMRequestPolicy` so a new model generation needs no edits here.
+    private func buildChatRequestBody(systemPrompt: String, userText: String, model: LLMModel, temperature: Double) -> [String: Any] {
+        LLMRequestPolicy.openAIChatBody(
+            model: model,
+            systemPrompt: systemPrompt,
+            userText: userText,
+            preferredTemperature: temperature
+        )
     }
 
 	    private struct ChatCompletionResponse: Decodable {
 	        struct Choice: Decodable {
 	            struct Message: Decodable {
-	                let content: String
+	                let content: String?
 	            }
 	            let message: Message
+	            let finish_reason: String?
 	        }
 	        let choices: [Choice]
 	    }
@@ -1655,6 +1218,11 @@ Rules:
 	            let type: String?
 	            let content: [ContentItem]?
 	        }
+	        struct IncompleteDetails: Decodable {
+	            let reason: String?
+	        }
+	        let status: String?
+	        let incomplete_details: IncompleteDetails?
 	        let output_text: String?
 	        let output: [OutputItem]?
 	    }
@@ -1664,46 +1232,6 @@ Rules:
 	            let message: String
 	        }
 	        let error: APIError
-	    }
-
-	    private func shouldUseOpenAIResponsesAPI(modelName: String) -> Bool {
-	        modelName.hasPrefix("gpt-5")
-	    }
-
-	    private func buildOpenAIResponsesBody(fromChatBody chatBody: [String: Any]) -> [String: Any]? {
-	        guard let model = chatBody["model"] as? String else { return nil }
-	        guard let messages = chatBody["messages"] as? [[String: Any]] else { return nil }
-
-	        let input: [[String: Any]] = messages.compactMap { message in
-	            guard let role = message["role"] as? String else { return nil }
-	            guard let content = message["content"] as? String else { return nil }
-	            return [
-	                "role": role,
-	                "content": [
-	                    [
-	                        "type": "input_text",
-	                        "text": content
-	                    ]
-	                ]
-	            ]
-	        }
-
-	        guard !input.isEmpty else { return nil }
-
-	        var body: [String: Any] = [
-	            "model": model,
-	            "input": input
-	        ]
-
-	        if let maxCompletion = chatBody["max_completion_tokens"] as? Int {
-	            body["max_output_tokens"] = maxCompletion
-	        }
-
-	        if let temperature = chatBody["temperature"] {
-	            body["temperature"] = temperature
-	        }
-
-	        return body
 	    }
 
 	    private func extractText(from response: OpenAIResponsesResponse) -> String? {
@@ -1729,8 +1257,8 @@ Rules:
 	        }
 
 	        if let modelName = requestBody["model"] as? String,
-	           shouldUseOpenAIResponsesAPI(modelName: modelName),
-	           let responsesBody = buildOpenAIResponsesBody(fromChatBody: requestBody) {
+	           LLMRequestPolicy.usesOpenAIResponsesAPI(modelName),
+	           let responsesBody = LLMRequestPolicy.openAIResponsesBody(fromChatBody: requestBody) {
 	            return performOpenAIResponses(apiKey: apiKey, requestBody: responsesBody, completion: completion)
 	        }
 
@@ -1778,6 +1306,10 @@ Rules:
 
                 do {
                     let decoded = try self.jsonDecoder.decode(ChatCompletionResponse.self, from: data)
+                    if decoded.choices.first?.finish_reason == "length" {
+                        completion(.failure(TranslationError.outputTruncated))
+                        return
+                    }
                     guard let content = decoded.choices.first?.message.content else {
                         completion(.failure(TranslationError.invalidResponse))
                         return
@@ -1844,6 +1376,14 @@ Rules:
 
 	                do {
 	                    let decoded = try self.jsonDecoder.decode(OpenAIResponsesResponse.self, from: data)
+	                    if decoded.status == "incomplete" {
+	                        completion(.failure(
+	                            decoded.incomplete_details?.reason == "max_output_tokens"
+	                                ? TranslationError.outputTruncated
+	                                : TranslationError.invalidResponse
+	                        ))
+	                        return
+	                    }
 	                    guard let content = self.extractText(from: decoded) else {
 	                        completion(.failure(TranslationError.invalidResponse))
 	                        return
@@ -1865,18 +1405,20 @@ Rules:
                 let parts: [Part]?
             }
             let content: Content?
+            let finishReason: String?
         }
         let candidates: [Candidate]?
     }
 
     @discardableResult
-    private func performGeminiGenerateContent(apiKey: String, modelName: String, systemPrompt: String, userText: String, maxOutputTokens: Int, temperature: Double?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
+    private func performGeminiGenerateContent(apiKey: String, model: LLMModel, systemPrompt: String, userText: String, temperature: Double?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
         guard !apiKey.isEmpty else {
             completion(.failure(TranslationError.apiKeyMissing))
             return nil
         }
 
-        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelName):generateContent?key=\(apiKey)") else {
+        guard let encodedModel = model.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(encodedModel):generateContent") else {
             completion(.failure(TranslationError.invalidURL))
             return nil
         }
@@ -1884,13 +1426,13 @@ Rules:
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
 
-        var generationConfig: [String: Any] = [
-            "maxOutputTokens": maxOutputTokens
-        ]
-        if let temperature {
-            generationConfig["temperature"] = temperature
-        }
+        let generationConfig = LLMRequestPolicy.geminiGenerationConfig(
+            model: model,
+            userText: userText,
+            preferredTemperature: temperature
+        )
 
         let requestBody: [String: Any] = [
             "systemInstruction": [
@@ -1945,6 +1487,10 @@ Rules:
 
 	                do {
 	                    let decoded = try self.jsonDecoder.decode(GeminiGenerateContentResponse.self, from: data)
+	                    if decoded.candidates?.first?.finishReason == "MAX_TOKENS" {
+	                        completion(.failure(TranslationError.outputTruncated))
+	                        return
+	                    }
 	                    let text = (decoded.candidates?.first?.content?.parts?.compactMap(\.text).joined(separator: "\n") ?? "").normalizedPlainText()
 	                    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
 	                        completion(.failure(TranslationError.invalidResponse))
@@ -1973,7 +1519,7 @@ Rules:
         isTranslating = true
         errorMessage = nil
 
-	        let modelToUse = modelOverride ?? builtInTranslateModel
+	        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
 	        let languageMode = translationLanguageMode(for: targetLanguage)
 		        translateText(text: text, languageMode: languageMode, modelOverride: modelToUse) { [weak self] result in
 		            self?.isTranslating = false
@@ -2022,28 +1568,26 @@ Rules:
 	            return nil
 	        }
 
-	        let modelToUse = modelOverride ?? builtInTranslateModel
+	        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
 	        let actionKey = TranslationService.builtInTranslateSelectionKey
-	        guard guardModelAvailable(modelToUse, completion: completion) else { return nil }
 	        switch modelToUse.provider {
 	        case .openAI:
 	            let requestBody = buildRequestBody(
                 text: text,
                 languageMode: languageMode,
-                modelName: modelToUse.name,
+                model: modelToUse,
                 actionKey: actionKey
             )
             return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody, completion: completion)
 	        case .gemini:
             return performGeminiGenerateContent(
 	                apiKey: geminiAPIKey,
-	                modelName: modelToUse.name,
+	                model: modelToUse,
 	                systemPrompt: translateSystemPrompt(
                     languageMode: languageMode,
                     actionKey: actionKey
 	                ),
 	                userText: text,
-                maxOutputTokens: 1000,
                 temperature: 0.3,
                 completion: completion
             )
@@ -2067,20 +1611,18 @@ Rules:
 	            return nil
 	        }
 
-	        let modelToUse = modelOverride ?? builtInTranslateModel
+	        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
 	        let actionKey = TranslationService.builtInTranslateSelectionKey
-	        guard guardModelAvailable(modelToUse, completion: completion) else { return nil }
 	        switch modelToUse.provider {
 	        case .openAI:
-            let requestBody = buildHTMLTranslateRequestBody(html: html, languageMode: languageMode, modelName: modelToUse.name, actionKey: actionKey)
+            let requestBody = buildHTMLTranslateRequestBody(html: html, languageMode: languageMode, model: modelToUse, actionKey: actionKey)
 	            return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody, completion: completion)
 	        case .gemini:
             return performGeminiGenerateContent(
 	                apiKey: geminiAPIKey,
-	                modelName: modelToUse.name,
+	                model: modelToUse,
                     systemPrompt: translateHTMLSystemPrompt(languageMode: languageMode, actionKey: actionKey),
 	                userText: html,
-                maxOutputTokens: 1500,
                 temperature: 0.2,
                 completion: completion
             )
@@ -2104,20 +1646,18 @@ Rules:
             return nil
         }
 
-        let modelToUse = modelOverride ?? builtInTranslateModel
+        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
         let actionKey = TranslationService.builtInTranslateSelectionKey
-        guard guardModelAvailable(modelToUse, completion: completion) else { return nil }
         switch modelToUse.provider {
         case .openAI:
-            let requestBody = buildHTMLToMarkdownTranslateRequestBody(html: html, languageMode: languageMode, modelName: modelToUse.name, actionKey: actionKey)
+            let requestBody = buildHTMLToMarkdownTranslateRequestBody(html: html, languageMode: languageMode, model: modelToUse, actionKey: actionKey)
             return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody, completion: completion)
         case .gemini:
             return performGeminiGenerateContent(
                 apiKey: geminiAPIKey,
-                modelName: modelToUse.name,
+                model: modelToUse,
                 systemPrompt: translateHTMLToMarkdownSystemPrompt(languageMode: languageMode, actionKey: actionKey),
                 userText: html,
-                maxOutputTokens: 1500,
                 temperature: 0.2,
                 completion: completion
             )
@@ -2131,19 +1671,17 @@ Rules:
 	            return nil
 	        }
 
-	        let modelToUse = modelOverride ?? builtInTranslateModel
-	        guard guardModelAvailable(modelToUse, completion: completion) else { return nil }
+	        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
 	        switch modelToUse.provider {
 	        case .openAI:
-	            let requestBody = buildGrammarFixRequestBody(text: text, modelName: modelToUse.name)
+	            let requestBody = buildGrammarFixRequestBody(text: text, model: modelToUse)
 	            return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody, completion: completion)
 	        case .gemini:
             return performGeminiGenerateContent(
                 apiKey: geminiAPIKey,
-                modelName: modelToUse.name,
+                model: modelToUse,
                 systemPrompt: grammarSystemPrompt(),
                 userText: text,
-                maxOutputTokens: 1000,
                 temperature: 0.2,
                 completion: completion
             )
@@ -2187,14 +1725,10 @@ Rules:
 	        isTranslating = true
 	        errorMessage = nil
 
-	        let modelToUse = modelOverride ?? builtInTranslateModel
-	        guard guardModelAvailable(modelToUse, completion: completion) else {
-	            isTranslating = false
-	            return nil
-	        }
+	        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
 	        switch modelToUse.provider {
 	        case .openAI:
-	            let requestBody = buildCustomActionRequestBody(text: normalizedText, prompt: styledPrompt, modelName: modelToUse.name)
+	            let requestBody = buildCustomActionRequestBody(text: normalizedText, prompt: styledPrompt, model: modelToUse)
 	            return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody) { [weak self] result in
                 self?.isTranslating = false
                 switch result {
@@ -2216,10 +1750,9 @@ Rules:
 	        case .gemini:
             return performGeminiGenerateContent(
                 apiKey: geminiAPIKey,
-                modelName: modelToUse.name,
+                model: modelToUse,
                 systemPrompt: styledPrompt,
                 userText: normalizedText,
-                maxOutputTokens: 1500,
                 temperature: 0.2,
                 completion: { [weak self] result in
                     self?.isTranslating = false
@@ -2267,11 +1800,7 @@ Rules:
         isTranslating = true
         errorMessage = nil
 
-        let modelToUse = modelOverride ?? builtInTranslateModel
-        guard guardModelAvailable(modelToUse, completion: completion) else {
-            isTranslating = false
-            return nil
-        }
+        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
 
         let htmlPrompt = """
         System requirements (highest priority):
@@ -2297,7 +1826,7 @@ Rules:
 
         switch modelToUse.provider {
         case .openAI:
-            let requestBody = buildCustomActionRequestBody(text: trimmedHTML, prompt: styledPrompt, modelName: modelToUse.name)
+            let requestBody = buildCustomActionRequestBody(text: trimmedHTML, prompt: styledPrompt, model: modelToUse)
             return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody) { [weak self] result in
                 self?.isTranslating = false
                 switch result {
@@ -2319,10 +1848,9 @@ Rules:
         case .gemini:
             return performGeminiGenerateContent(
                 apiKey: geminiAPIKey,
-                modelName: modelToUse.name,
+                model: modelToUse,
                 systemPrompt: styledPrompt,
                 userText: trimmedHTML,
-                maxOutputTokens: 1500,
                 temperature: 0.2,
                 completion: { [weak self] result in
                     self?.isTranslating = false
@@ -2364,11 +1892,7 @@ Rules:
         isTranslating = true
         errorMessage = nil
 
-        let modelToUse = modelOverride ?? builtInTranslateModel
-        guard guardModelAvailable(modelToUse, completion: completion) else {
-            isTranslating = false
-            return nil
-        }
+        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
 
         let markdownPrompt = """
 System requirements (highest priority):
@@ -2387,7 +1911,7 @@ Task:
 
         switch modelToUse.provider {
         case .openAI:
-            let requestBody = buildCustomActionRequestBody(text: trimmedHTML, prompt: styledPrompt, modelName: modelToUse.name)
+            let requestBody = buildCustomActionRequestBody(text: trimmedHTML, prompt: styledPrompt, model: modelToUse)
             return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody) { [weak self] result in
                 self?.isTranslating = false
                 switch result {
@@ -2409,10 +1933,9 @@ Task:
         case .gemini:
             return performGeminiGenerateContent(
                 apiKey: geminiAPIKey,
-                modelName: modelToUse.name,
+                model: modelToUse,
                 systemPrompt: styledPrompt,
                 userText: trimmedHTML,
-                maxOutputTokens: 1500,
                 temperature: 0.2,
                 completion: { [weak self] result in
                     self?.isTranslating = false
@@ -2448,19 +1971,17 @@ Task:
 	            return nil
 	        }
 
-	        let modelToUse = modelOverride ?? builtInTranslateModel
-	        guard guardModelAvailable(modelToUse, completion: completion) else { return nil }
+	        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
 	        switch modelToUse.provider {
 	        case .openAI:
-	            let requestBody = buildHTMLGrammarFixRequestBody(html: html, modelName: modelToUse.name)
+	            let requestBody = buildHTMLGrammarFixRequestBody(html: html, model: modelToUse)
 	            return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody, completion: completion)
 	        case .gemini:
             return performGeminiGenerateContent(
                 apiKey: geminiAPIKey,
-                modelName: modelToUse.name,
+                model: modelToUse,
                 systemPrompt: grammarHTMLSystemPrompt(),
                 userText: html,
-                maxOutputTokens: 1500,
                 temperature: 0.2,
                 completion: completion
             )
@@ -2472,12 +1993,12 @@ Task:
 	    case apiKeyMissing
 	    case emptyText
 	    case customPromptMissing
-	    case modelUnavailable(String)
 	    case invalidURL
 	    case noData
 	    case invalidResponse
 	    case httpError(Int)
 	    case apiError(String)
+	    case outputTruncated
     
     var errorDescription: String? {
         switch self {
@@ -2487,8 +2008,6 @@ Task:
             return "Text to translate is empty"
 	        case .customPromptMissing:
 	            return "Custom prompt is not set"
-	        case .modelUnavailable(let model):
-	            return "Model is not available: \(model). Refresh models or choose another one in Settings."
 	        case .invalidURL:
 	            return "Invalid URL"
 	        case .noData:
@@ -2499,6 +2018,168 @@ Task:
             return "HTTP error: \(code)"
         case .apiError(let message):
             return message
+        case .outputTruncated:
+            return "The response was cut off by the model's output limit. Try a shorter text or a different model."
         }
+    }
+}
+
+/// Model-family rules for request parameters.  Decisions are made by model
+/// family and generation (e.g. `gpt-6-*`, `gemini-3.*`) and by the selected
+/// reasoning effort, rather than by exact model names.
+enum LLMRequestPolicy {
+    static let minimumOutputTokens = 4096
+    static let maximumOutputTokens = 64_000
+
+    /// Major generation of a `gpt-N…` model (`gpt-6-sol` → 6, `gpt-5.6-luna`
+    /// → 5, `gpt-4o` → 4). Fine-tuned `ft:` prefixes are ignored.
+    static func openAIGeneration(_ modelName: String) -> Int? {
+        majorVersion(of: modelName, afterPrefix: "gpt-")
+    }
+
+    /// Major generation of a `gemini-N…` model (`gemini-3.8-flash` → 3).
+    static func geminiGeneration(_ modelName: String) -> Int? {
+        majorVersion(of: modelName, afterPrefix: "gemini-")
+    }
+
+    /// GPT-5 and newer are reasoning models and are served best by the
+    /// Responses API.
+    static func usesOpenAIResponsesAPI(_ modelName: String) -> Bool {
+        (openAIGeneration(modelName) ?? 0) >= 5
+    }
+
+    /// The effort to send to OpenAI: the selected one, or `low` for a GPT-5+
+    /// model that has no selection (accepted by every GPT-5+ model).
+    static func openAIReasoningEffort(for model: LLMModel) -> ReasoningEffort? {
+        if let effort = model.reasoningEffort { return effort }
+        return usesOpenAIResponsesAPI(model.name) ? .low : nil
+    }
+
+    /// Sampling parameters are rejected while reasoning is active (GPT-5+
+    /// with effort other than `none`, o-series), so only then are they sent.
+    static func openAIAcceptsTemperature(for model: LLMModel) -> Bool {
+        let name = normalizedName(model.name)
+        if name.hasPrefix("o1") || name.hasPrefix("o3") || name.hasPrefix("o4") {
+            return false
+        }
+        guard let effort = openAIReasoningEffort(for: model) else { return true }
+        return effort == .none
+    }
+
+    /// Output budget sized from the input plus headroom for the selected
+    /// effort.  Reasoning and thinking tokens count towards the limit, so a
+    /// fixed small cap silently truncates long texts.
+    static func outputTokenBudget(userText: String, reasoningEffort: ReasoningEffort?) -> Int {
+        // Roughly 3 UTF-8 bytes per token overestimates tokens for Latin
+        // text and is close for Cyrillic/CJK, which is the safe direction.
+        let estimatedInputTokens = userText.utf8.count / 3 + 1
+        let budget = estimatedInputTokens * 2 + 2048 + reasoningHeadroom(reasoningEffort)
+        return min(max(budget, minimumOutputTokens), maximumOutputTokens)
+    }
+
+    static func reasoningHeadroom(_ effort: ReasoningEffort?) -> Int {
+        switch effort {
+        case .none?: return 0
+        case .minimal?: return 1024
+        case .low?, nil: return 4096
+        case .medium?: return 8192
+        case .high?: return 16_384
+        case .xhigh?: return 32_768
+        case .max?: return 49_152
+        }
+    }
+
+    static func openAIChatBody(
+        model: LLMModel,
+        systemPrompt: String,
+        userText: String,
+        preferredTemperature: Double
+    ) -> [String: Any] {
+        let effort = openAIReasoningEffort(for: model)
+        var body: [String: Any] = [
+            "model": model.name,
+            "messages": [
+                ["role": "system", "content": systemPrompt],
+                ["role": "user", "content": userText]
+            ],
+            "max_completion_tokens": outputTokenBudget(userText: userText, reasoningEffort: effort)
+        ]
+        if let effort {
+            body["reasoning_effort"] = effort.rawValue
+        }
+        if openAIAcceptsTemperature(for: model) {
+            body["temperature"] = preferredTemperature
+        }
+        return body
+    }
+
+    static func openAIResponsesBody(fromChatBody chatBody: [String: Any]) -> [String: Any]? {
+        guard let model = chatBody["model"] as? String,
+              let messages = chatBody["messages"] as? [[String: Any]] else { return nil }
+
+        let input: [[String: Any]] = messages.compactMap { message in
+            guard let role = message["role"] as? String,
+                  let content = message["content"] as? String else { return nil }
+            return [
+                "role": role,
+                "content": [["type": "input_text", "text": content]]
+            ]
+        }
+        guard !input.isEmpty else { return nil }
+
+        var body: [String: Any] = ["model": model, "input": input]
+        if let maxTokens = chatBody["max_completion_tokens"] as? Int {
+            body["max_output_tokens"] = maxTokens
+        }
+        if let effort = chatBody["reasoning_effort"] as? String {
+            body["reasoning"] = ["effort": effort]
+        }
+        if let temperature = chatBody["temperature"] {
+            body["temperature"] = temperature
+        }
+        return body
+    }
+
+    /// Gemini 3+ controls thinking with `thinkingLevel` (it cannot be turned
+    /// off); Google recommends keeping temperature at its default there, as
+    /// lower values can cause looping.  Older models keep the low temperature.
+    static func geminiGenerationConfig(
+        model: LLMModel,
+        userText: String,
+        preferredTemperature: Double?
+    ) -> [String: Any] {
+        let isGemini3OrNewer = (geminiGeneration(model.name) ?? 0) >= 3
+        let thinkingLevel = isGemini3OrNewer ? geminiThinkingLevel(model.reasoningEffort) : nil
+        var config: [String: Any] = [
+            "maxOutputTokens": outputTokenBudget(userText: userText, reasoningEffort: thinkingLevel)
+        ]
+        if let thinkingLevel {
+            config["thinkingConfig"] = ["thinkingLevel": thinkingLevel.rawValue]
+        } else if let preferredTemperature {
+            config["temperature"] = preferredTemperature
+        }
+        return config
+    }
+
+    /// Gemini levels are `minimal`/`low`/`medium`/`high`.
+    private static func geminiThinkingLevel(_ effort: ReasoningEffort?) -> ReasoningEffort {
+        switch effort {
+        case .minimal?, .low?, .medium?, .high?: return effort!
+        case .none?: return .minimal
+        case .xhigh?, .max?: return .high
+        case nil: return .low
+        }
+    }
+
+    private static func normalizedName(_ modelName: String) -> String {
+        let name = modelName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return name.hasPrefix("ft:") ? String(name.dropFirst(3)) : name
+    }
+
+    private static func majorVersion(of modelName: String, afterPrefix prefix: String) -> Int? {
+        let name = normalizedName(modelName)
+        guard name.hasPrefix(prefix) else { return nil }
+        let digits = name.dropFirst(prefix.count).prefix(while: \.isNumber)
+        return Int(digits)
     }
 }

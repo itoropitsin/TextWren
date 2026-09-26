@@ -104,21 +104,55 @@ enum RichTextHTMLSanitizer {
         )
 
         result = replacingRegex(in: result, pattern: "</?font\\b[^>]*>", with: "", options: [.caseInsensitive])
-        result = replacingRegex(in: result, pattern: "\\sface\\s*=\\s*\"[^\"]*\"", with: "", options: [.caseInsensitive])
-        result = replacingRegex(in: result, pattern: "\\scolor\\s*=\\s*\"[^\"]*\"", with: "", options: [.caseInsensitive])
 
-        // Strip CSS declarations that carry source-app typography or colors
-        // while keeping semantic styles such as bold and italic.
-        result = replacingRegex(in: result, pattern: "font-family\\s*:\\s*[^;\"']+;?", with: "", options: [.caseInsensitive])
-        result = replacingRegex(in: result, pattern: "font-size\\s*:\\s*[^;\"']+;?", with: "", options: [.caseInsensitive])
-        result = replacingRegex(in: result, pattern: "(?<![-\\w])(?:background-)?color\\s*:\\s*[^;\"']+;?", with: "", options: [.caseInsensitive])
+        // Source-app typography and colours live in tag attributes.  Only
+        // rewrite inside start tags, so text such as "Hair color: brown;"
+        // or a CSS snippet in a code block is never touched.
+        return replacingMatches(in: result, pattern: "<[a-zA-Z][^>]*>", options: []) { tag in
+            sanitizedStartTag(tag)
+        }
+    }
 
-        // Clean up empty style="" attributes left after stripping.
-        result = replacingRegex(in: result, pattern: "\\sstyle\\s*=\\s*\"\\s*\"", with: "", options: [.caseInsensitive])
-        result = replacingRegex(in: result, pattern: "\\sstyle\\s*=\\s*\"\\s*;\\s*\"", with: "", options: [.caseInsensitive])
-
+    /// Remove `face`/`color` attributes and typography/colour declarations
+    /// from `style`, keeping semantic styles such as bold and italic.
+    private static func sanitizedStartTag(_ tag: String) -> String {
+        var result = replacingRegex(
+            in: tag,
+            pattern: "\\s(?:face|color)\\s*=\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s>]+)",
+            with: "",
+            options: [.caseInsensitive]
+        )
+        result = replacingMatches(
+            in: result,
+            pattern: "\\sstyle\\s*=\\s*(\"[^\"]*\"|'[^']*')",
+            options: [.caseInsensitive]
+        ) { attribute in
+            guard let quoteIndex = attribute.firstIndex(where: { $0 == "\"" || $0 == "'" }) else {
+                return attribute
+            }
+            let quote = attribute[quoteIndex]
+            let value = attribute[attribute.index(after: quoteIndex)..<attribute.index(before: attribute.endIndex)]
+            let kept = value
+                .split(separator: ";")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { declaration in
+                    guard !declaration.isEmpty else { return false }
+                    let property = declaration
+                        .split(separator: ":", maxSplits: 1)
+                        .first?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased() ?? ""
+                    return !strippedStyleProperties.contains(property)
+                }
+            guard !kept.isEmpty else { return "" }
+            return " style=\(quote)\(kept.joined(separator: "; "))\(quote)"
+        }
         return result
     }
+
+    private static let strippedStyleProperties: Set<String> = [
+        "font-family", "font-size", "color", "background-color"
+    ]
 
     private static func removeDuplicateListBullets(from html: String) -> String {
         var result = html
@@ -133,14 +167,16 @@ enum RichTextHTMLSanitizer {
         // - <li><span><b>•</b></span> text</li>
         result = replacingRegex(
             in: result,
-            pattern: "(<li\\b[^>]*>(?:(?!<(?:pre|code)\\b)(?:\\s|&nbsp;|<[^>]+>))*)(" + markerPattern + ")((?:</?[^>]+>)*)(?:[ \\t]|&nbsp;)+((?:</?[^>]+>)*)",
+            pattern: "(<li\\b[^>]*>(?:(?!<(?:pre|code)\\b)(?:\\s|&nbsp;|<[^>]+>))*)(" + markerPattern + ")((?:<[^>]+>)*)(?:[ \\t]|&nbsp;)+((?:<[^>]+>)*)",
             with: "$1$3$4",
             options: [.caseInsensitive]
         )
 
         // Clean up empty wrappers that may remain after removing the bullet glyph.
         // Run this more than once so nested wrappers are removed from the inside out.
-        let emptyInlineWrapperPattern = "<(?:strong|b|span|em|i|u|s|del|a)\\b[^>]*>\\s*</(?:strong|b|span|em|i|u|s|del|a)>"
+        // Only truly empty pairs are removed: whitespace-only spans carry the
+        // space between styled words (Google Docs, Slack).
+        let emptyInlineWrapperPattern = "<(strong|b|span|em|i|u|s|del)\\b[^>]*></\\1>"
         for _ in 0..<3 {
             result = replacingRegex(in: result, pattern: emptyInlineWrapperPattern, with: "", options: [.caseInsensitive])
         }
@@ -156,7 +192,7 @@ enum RichTextHTMLSanitizer {
         // look-ahead allows inline wrappers such as <span>...</span> between
         // the glyph and the following whitespace.
         let blockStartPattern = "((?:^|<(?:p|div|h[1-6]|blockquote|td|th)\\b[^>]*>)(?:(?!<(?:pre|code)\\b)(?:\\s|&nbsp;|<[^>]+>))*)"
-        let followingWhitespace = "(?=(?:(?:</?[^>]+>)*)(?:[ \\t]|&nbsp;))"
+        let followingWhitespace = "(?=(?:(?:<[^>]+>)*)(?:[ \\t]|&nbsp;))"
         return replacingRegex(
             in: html,
             pattern: blockStartPattern + markerPattern + followingWhitespace,
@@ -166,11 +202,33 @@ enum RichTextHTMLSanitizer {
     }
 
     private static func replacingRegex(in input: String, pattern: String, with replacement: String, options: NSRegularExpression.Options = []) -> String {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else {
+        guard let regex = RegexCache.regex(pattern, options: options) else {
             return input
         }
         let range = NSRange(input.startIndex..<input.endIndex, in: input)
         return regex.stringByReplacingMatches(in: input, options: [], range: range, withTemplate: replacement)
+    }
+
+    static func replacingMatches(
+        in input: String,
+        pattern: String,
+        options: NSRegularExpression.Options,
+        transform: (String) -> String
+    ) -> String {
+        guard let regex = RegexCache.regex(pattern, options: options) else { return input }
+        let nsInput = input as NSString
+        let matches = regex.matches(in: input, options: [], range: NSRange(location: 0, length: nsInput.length))
+        guard !matches.isEmpty else { return input }
+
+        var result = ""
+        var cursor = 0
+        for match in matches {
+            result += nsInput.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            result += transform(nsInput.substring(with: match.range))
+            cursor = match.range.location + match.range.length
+        }
+        result += nsInput.substring(from: cursor)
+        return result
     }
 }
 
@@ -896,32 +954,73 @@ enum RichTextConverter {
     }
 
     /// AppKit's HTML importer canonicalizes some URL strings (for example,
-    /// `https://example.com` becomes `https://example.com/`). Keep the source
-    /// attribute text for each link while still using the imported attributed
-    /// string to normalize lists, fonts, colours and paragraph boundaries.
-    private static func preservingOriginalLinkDestinations(in generatedHTML: String, sourceHTML: String) -> String {
-        let destinations = linkDestinations(in: sourceHTML)
-        guard !destinations.isEmpty else { return generatedHTML }
-
-        guard let anchorRegex = try? NSRegularExpression(
-            pattern: "(<a\\b[^>]*?\\bhref\\s*=\\s*\\\")([^\\\"]*)(\\\")",
-            options: [.caseInsensitive, .dotMatchesLineSeparators]
-        ) else {
-            return generatedHTML
-        }
-        let generatedRange = NSRange(generatedHTML.startIndex..<generatedHTML.endIndex, in: generatedHTML)
-        let matches = anchorRegex.matches(in: generatedHTML, options: [], range: generatedRange)
-        guard !matches.isEmpty else { return generatedHTML }
-
-        var result = generatedHTML
-        for (index, match) in matches.enumerated().reversed() {
-            guard index < destinations.count,
-                  let valueRange = Range(match.range(at: 2), in: result) else {
-                continue
+    /// `https://example.com` becomes `https://example.com/`). Restore the
+    /// exact source destination for every generated link that points to the
+    /// same URL.  Links are matched by URL, not by position: the generator
+    /// writes one `<a>` per attribute run (a partly bold link becomes two)
+    /// and the importer can drop anchors, so positional matching would give
+    /// later links the wrong destination.
+    static func preservingOriginalLinkDestinations(in generatedHTML: String, sourceHTML: String) -> String {
+        var sourceByKey: [String: String] = [:]
+        for destination in linkDestinations(in: sourceHTML) {
+            let decoded = decodeHTMLAttribute(destination)
+            let key = linkMatchKey(decoded)
+            // An ambiguous key (two different sources, same URL) keeps the
+            // importer's value rather than guessing.
+            if let existing = sourceByKey[key], existing != decoded {
+                sourceByKey[key] = ""
+            } else {
+                sourceByKey[key] = decoded
             }
-            result.replaceSubrange(valueRange, with: destinations[index])
         }
-        return result
+        guard !sourceByKey.isEmpty else { return generatedHTML }
+
+        return RichTextHTMLSanitizer.replacingMatches(
+            in: generatedHTML,
+            pattern: "(<a\\b[^>]*?\\bhref\\s*=\\s*\")([^\"]*)(\")",
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) { anchor in
+            guard let hrefStart = anchor.range(of: "href", options: .caseInsensitive),
+                  let open = anchor[hrefStart.upperBound...].firstIndex(of: "\""),
+                  let close = anchor[anchor.index(after: open)...].firstIndex(of: "\"") else {
+                return anchor
+            }
+            let generated = decodeHTMLAttribute(String(anchor[anchor.index(after: open)..<close]))
+            guard let source = sourceByKey[linkMatchKey(generated)], !source.isEmpty else {
+                return anchor
+            }
+            return String(anchor[...open]) + escapeHTMLAttribute(source) + String(anchor[close...])
+        }
+    }
+
+    /// Comparison key that ignores the canonicalization AppKit applies:
+    /// case of scheme and host, a bare root slash, and percent-encoding.
+    private static func linkMatchKey(_ destination: String) -> String {
+        var value = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+        value = value.removingPercentEncoding ?? value
+        if let components = URLComponents(string: destination.trimmingCharacters(in: .whitespacesAndNewlines)),
+           let scheme = components.scheme,
+           let host = components.host {
+            let path = components.percentEncodedPath.removingPercentEncoding ?? components.percentEncodedPath
+            var key = "\(scheme.lowercased())://\(host.lowercased())"
+            if let port = components.port { key += ":\(port)" }
+            key += path == "/" ? "" : path
+            if let query = components.percentEncodedQuery { key += "?" + (query.removingPercentEncoding ?? query) }
+            if let fragment = components.percentEncodedFragment { key += "#" + (fragment.removingPercentEncoding ?? fragment) }
+            return key
+        }
+        return value
+    }
+
+    private static func decodeHTMLAttribute(_ value: String) -> String {
+        guard value.contains("&") else { return value }
+        return value
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&#x27;", with: "'")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&amp;", with: "&")
     }
 
     private static func linkDestinations(in html: String) -> [String] {
@@ -1393,5 +1492,22 @@ enum RichTextPasteboard {
         // is for applications that understand neither representation.
         item.setString(payload.plain, forType: .string)
         pasteboard.writeObjects([item])
+    }
+}
+
+/// Compiled regular expressions, keyed by pattern and options.  The rich
+/// text pipeline runs the same patterns on every copy and response.
+enum RegexCache {
+    nonisolated private static let lock = NSLock()
+    nonisolated(unsafe) private static var cache: [String: NSRegularExpression] = [:]
+
+    nonisolated static func regex(_ pattern: String, options: NSRegularExpression.Options = []) -> NSRegularExpression? {
+        let key = "\(options.rawValue)|\(pattern)"
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = cache[key] { return cached }
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
+        cache[key] = regex
+        return regex
     }
 }

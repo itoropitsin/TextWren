@@ -12,7 +12,6 @@ struct SettingsView: View {
     @State private var keyValidationTasks: [LLMProvider: Task<Void, Never>] = [:]
     @State private var keyValidationRequestTasks: [LLMProvider: Task<Void, Never>] = [:]
     @State private var apiAlert: APIAlert?
-    @State private var pendingDelete: PendingDelete?
     @State private var customActions: [CustomAction] = []
     @State private var starredPrimarySelectionKey: String = TranslationService.builtInTranslateSelectionKey
     @State private var starredSecondaryActionId: UUID?
@@ -25,10 +24,6 @@ struct SettingsView: View {
     @State private var popupHotkey: KeyboardShortcut = KeyboardShortcut(keyCode: 8, modifiers: [.command])
     @State private var popupHotkeyPressMode: PopupHotkeyPressMode = .doublePress
     @State private var popupHotkeyError: String?
-    @State private var draftModels: [LLMModelEntry] = []
-    @State private var draftModelVisibility: [String: Bool] = [:]
-    @State private var draftModelAvailability: [String: Bool] = [:]
-    @State private var deletedModelKeys: Set<String> = []
     @State private var validatedKeyCandidates: [LLMProvider: String] = [:]
     @State private var keyValidationGeneration: [LLMProvider: Int] = [:]
     @State private var permissionRefreshToken = UUID()
@@ -108,12 +103,6 @@ struct SettingsView: View {
                     translationService.saveActionStyleContextActionKeys(actionStyleContextActionKeys)
                     translationService.saveAPIKey(openAIKey, for: .openAI)
                     translationService.saveAPIKey(geminiKey, for: .gemini)
-                    translationService.commitModelCatalog(
-                        models: draftModels,
-                        visibility: draftModelVisibility,
-                        availability: draftModelAvailability,
-                        deletedKeys: deletedModelKeys
-                    )
 
                     if let error = keyboardMonitor.applyPopupHotkeySettings(shortcut: popupHotkey, pressMode: popupHotkeyPressMode) {
                         popupHotkeyError = error
@@ -149,10 +138,6 @@ struct SettingsView: View {
             popupHotkey = keyboardMonitor.popupHotkey
             popupHotkeyPressMode = keyboardMonitor.popupHotkeyPressMode
             popupHotkeyError = nil
-            draftModels = translationService.llmModels
-            draftModelVisibility = translationService.llmModelVisibility
-            draftModelAvailability = translationService.llmModelAvailability
-            deletedModelKeys = translationService.deletedModelKeysForSettings
             validatedKeyCandidates = [
                 .openAI: openAIKey.trimmingCharacters(in: .whitespacesAndNewlines),
                 .gemini: geminiKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -164,17 +149,6 @@ struct SettingsView: View {
         }
         .alert(item: $apiAlert) { alert in
             Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text("OK")))
-        }
-        .sheet(item: $pendingDelete) { pending in
-            ModelReplacementSheet(
-                pending: pending,
-                candidates: draftReplacementCandidates(excluding: pending.model),
-                onCancel: { pendingDelete = nil },
-                onReplaceAndDelete: { replacement in
-                    applyReplacementAndDelete(old: pending.model, replacement: replacement)
-                    pendingDelete = nil
-                }
-            )
         }
     }
 
@@ -200,17 +174,6 @@ struct SettingsView: View {
                     Text("Keys are tested before saving. A failed check leaves the draft untouched and shows the provider error.")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                }
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Models")
-                        .font(.headline)
-
-                    Text("Use the checkboxes to control which models are shown in the Actions model dropdown.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    modelsList
                 }
             }
             .padding(.horizontal)
@@ -271,13 +234,13 @@ struct SettingsView: View {
                     .font(.caption)
                 Spacer()
 
-                Button {
-                    refreshProviderModels(provider)
-                } label: {
-                    Label("Refresh models", systemImage: "arrow.clockwise.circle.fill")
+                if isBusy {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Checking key…")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(isBusy || !hasDraftKey)
             }
 
             if needsKeychainRetry {
@@ -305,32 +268,6 @@ struct SettingsView: View {
         }
         .padding(.vertical, 6)
         .hoverRowHighlight()
-    }
-
-    private var modelsList: some View {
-        let grouped = Dictionary(grouping: draftModels, by: { $0.model.provider })
-        let providers = LLMProvider.allCases
-
-        return VStack(alignment: .leading, spacing: 10) {
-            ForEach(providers) { provider in
-                let models = (grouped[provider] ?? []).sorted {
-                    $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
-                }
-
-                if !models.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(provider.displayName)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-
-                        ForEach(models) { entry in
-                            modelRow(entry)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-        }
     }
 
     private func scheduleProviderKeyValidation(_ provider: LLMProvider, candidate: String) {
@@ -396,158 +333,6 @@ struct SettingsView: View {
             }
         }
         keyValidationRequestTasks[provider] = task
-    }
-
-    private func refreshProviderModels(_ provider: LLMProvider) {
-        guard !busyProviders.contains(provider) else { return }
-        busyProviders.insert(provider)
-
-        let key = provider == .openAI ? openAIKey : geminiKey
-        let existingKeys = Set(draftModels.map(\.model.key))
-        Task { @MainActor in
-            defer { busyProviders.remove(provider) }
-
-            let result = await translationService.fetchModelsForSettings(for: provider, apiKey: key)
-
-            switch result {
-            case .success(let models):
-                applyFetchedModelsToDraft(models, for: provider)
-                let addedCount = Set(draftModels.map(\.model.key)).subtracting(existingKeys).count
-
-                if models.isEmpty {
-                    apiAlert = APIAlert(
-                        title: "No compatible models",
-                        message: "\(provider.displayName) returned no models supported by TinyAI."
-                    )
-                } else if addedCount == 0 {
-                    apiAlert = APIAlert(
-                        title: "Models are up to date",
-                        message: "No new \(provider.displayName) models were found for this API key."
-                    )
-                }
-            case .failure(let error):
-                apiAlert = APIAlert(
-                    title: "Failed to refresh models",
-                    message: error.errorDescription ?? "Unknown error"
-                )
-            }
-        }
-    }
-
-    private func applyFetchedModelsToDraft(_ fetched: [LLMModelEntry], for provider: LLMProvider) {
-        let merged = TranslationService.mergeFetchedModels(
-            existing: draftModels,
-            fetched: fetched,
-            visibility: draftModelVisibility,
-            availability: draftModelAvailability,
-            provider: provider,
-            deletedKeys: deletedModelKeys
-        )
-        draftModels = merged.models
-        draftModelVisibility = merged.visibility
-        draftModelAvailability = merged.availability
-    }
-
-    private func modelRow(_ entry: LLMModelEntry) -> some View {
-        let isDeprecated = !(draftModelAvailability[entry.model.key] ?? true)
-
-        return HStack(spacing: 10) {
-            Toggle(isOn: Binding(
-                get: { draftModelVisibility[entry.model.key] ?? true },
-                set: { draftModelVisibility[entry.model.key] = $0 }
-            )) {
-                Text(entry.displayName)
-                    .foregroundColor(isDeprecated ? .red : .primary)
-            }
-
-            Spacer(minLength: 8)
-
-            if isDeprecated {
-                Button {
-                    apiAlert = APIAlert(
-                        title: "Model is no longer available",
-                        message: "This model is not returned by the provider for your current API key, but it remains in the list for compatibility."
-                    )
-                } label: {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.red)
-                }
-                .buttonStyle(.borderless)
-                .help("No longer available")
-            }
-
-            Button(role: .destructive) {
-                requestDelete(entry.model)
-            } label: {
-                Text("Delete")
-            }
-            .buttonStyle(.borderless)
-        }
-        .padding(.vertical, 2)
-    }
-
-    private func requestDelete(_ model: LLMModel) {
-        guard draftModels.count > 1 else {
-            apiAlert = APIAlert(
-                title: "Keep at least one model",
-                message: "TinyAI needs one available model to run an action."
-            )
-            return
-        }
-
-        let usedInTranslate = builtInTranslateModel == model
-        let actionIndexes = customActions.indices.filter { customActions[$0].model == model }
-
-        if usedInTranslate || !actionIndexes.isEmpty {
-            pendingDelete = PendingDelete(model: model, usedInTranslate: usedInTranslate, actionIndexes: actionIndexes)
-            return
-        }
-
-        removeDraftModel(model)
-    }
-
-    private func applyReplacementAndDelete(old: LLMModel, replacement: LLMModel) {
-        if builtInTranslateModel == old {
-            builtInTranslateModel = replacement
-        }
-
-        if customActions.contains(where: { $0.model == old }) {
-            customActions = customActions.map { action in
-                if action.model == old {
-                    var copy = action
-                    copy.model = replacement
-                    return copy
-                }
-                return action
-            }
-        }
-
-        removeDraftModel(old)
-    }
-
-    private func removeDraftModel(_ model: LLMModel) {
-        draftModels.removeAll { $0.model == model }
-        draftModelVisibility.removeValue(forKey: model.key)
-        draftModelAvailability.removeValue(forKey: model.key)
-        deletedModelKeys.insert(model.key)
-    }
-
-    private func draftReplacementCandidates(excluding model: LLMModel) -> [LLMModelEntry] {
-        draftModels
-            .filter { $0.model != model }
-            .filter { draftModelAvailability[$0.model.key] ?? true }
-            .sorted { $0.displayNameWithProvider.localizedCaseInsensitiveCompare($1.displayNameWithProvider) == .orderedAscending }
-    }
-
-    private func draftModelsForActionsPickerIncluding(_ selection: LLMModel) -> [LLMModelEntry] {
-        var list = draftModels
-            .filter { draftModelVisibility[$0.model.key] ?? true }
-            .sorted { $0.displayNameWithProvider.localizedCaseInsensitiveCompare($1.displayNameWithProvider) == .orderedAscending }
-        if !list.contains(where: { $0.model == selection }) {
-            let fallbackName = draftModels.first(where: { $0.model == selection })?.displayName ?? selection.name
-            list.insert(LLMModelEntry(model: selection, displayName: fallbackName), at: 0)
-        }
-        return list
     }
 
     private var actionStyleOptions: [(key: String, title: String)] {
@@ -756,13 +541,18 @@ struct SettingsView: View {
                         Text("Model")
                             .foregroundColor(.secondary)
                             .frame(width: settingsLabelColumnWidth, alignment: .leading)
-                        Picker("", selection: $builtInTranslateModel) {
-                            ForEach(draftModelsForActionsPickerIncluding(builtInTranslateModel)) { entry in
-                                Text(entry.displayNameWithProvider).tag(entry.model)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: settingsControlColumnWidth)
+                        ModelPicker(selection: $builtInTranslateModel)
+                            .frame(width: settingsControlColumnWidth)
+                    }
+                    .padding(.vertical, 2)
+                    .hoverRowHighlight()
+
+                    HStack(alignment: .center, spacing: 12) {
+                        Text("Reasoning")
+                            .foregroundColor(.secondary)
+                            .frame(width: settingsLabelColumnWidth, alignment: .leading)
+                        ReasoningEffortPicker(selection: $builtInTranslateModel)
+                            .frame(width: settingsControlColumnWidth)
                     }
                     .padding(.vertical, 2)
                     .hoverRowHighlight()
@@ -914,13 +704,16 @@ struct SettingsView: View {
                                     .textFieldStyle(.roundedBorder)
                                     .frame(minWidth: 180)
 
-                                    Picker("", selection: $customActions[index].model) {
-                                        ForEach(draftModelsForActionsPickerIncluding(customActions[index].model)) { entry in
-                                            Text(entry.displayNameWithProvider).tag(entry.model)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                    .frame(width: customActionModelPickerWidth)
+                                    ModelPicker(selection: $customActions[index].model)
+                                        .frame(width: customActionModelPickerWidth)
+                                }
+
+                                HStack(alignment: .center, spacing: 12) {
+                                    Spacer()
+                                    Text("Reasoning")
+                                        .foregroundColor(.secondary)
+                                    ReasoningEffortPicker(selection: $customActions[index].model)
+                                        .frame(width: customActionModelPickerWidth)
                                 }
 
                                 InsetTextEditor(text: $customActions[index].prompt)
@@ -953,79 +746,6 @@ private struct APIAlert: Identifiable {
     let id = UUID()
     let title: String
     let message: String
-}
-
-private struct PendingDelete: Identifiable {
-    let id = UUID()
-    let model: LLMModel
-    let usedInTranslate: Bool
-    let actionIndexes: [Int]
-}
-
-private struct ModelReplacementSheet: View {
-    let pending: PendingDelete
-    let candidates: [LLMModelEntry]
-    let onCancel: () -> Void
-    let onReplaceAndDelete: (LLMModel) -> Void
-
-    @State private var selection: LLMModel?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Replace model before deleting")
-                .font(.headline)
-
-            Text(usageSummary)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-
-            Picker("Replacement model", selection: Binding(
-                get: { selection ?? candidates.first?.model },
-                set: { selection = $0 }
-            )) {
-                ForEach(candidates) { entry in
-                    Text(entry.displayNameWithProvider).tag(Optional(entry.model))
-                }
-            }
-            .pickerStyle(.menu)
-            .frame(maxWidth: 420, alignment: .leading)
-
-            HStack {
-                Button("Cancel", action: onCancel)
-                Spacer()
-                Button("Replace & Delete") {
-                    if let selected = selection ?? candidates.first?.model {
-                        onReplaceAndDelete(selected)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(candidates.isEmpty)
-            }
-        }
-        .padding(18)
-        .frame(width: 520)
-        .onAppear {
-            selection = candidates.first?.model
-        }
-    }
-
-    private var usageSummary: String {
-        var parts: [String] = []
-        if pending.usedInTranslate {
-            parts.append("Translate")
-        }
-        if !pending.actionIndexes.isEmpty {
-            let buttons = pending.actionIndexes
-                .sorted()
-                .map { "Button \($0 + 1)" }
-                .joined(separator: ", ")
-            parts.append(buttons)
-        }
-        if parts.isEmpty {
-            return "This model is not currently used, but a replacement is still required."
-        }
-        return "This model is used by: \(parts.joined(separator: ", ")). Choose a replacement to continue."
-    }
 }
 
 private struct KeyboardShortcutRecorder: View {
@@ -1188,5 +908,52 @@ private final class KeyCaptureView: NSView {
 
         let modifiers = ShortcutModifiers(modifierFlags: event.modifierFlags)
         onCapture?(event.keyCode, modifiers)
+    }
+}
+
+/// Picks a model from the supported catalog.  Changing the model keeps the
+/// current reasoning effort when the new model accepts it, otherwise it
+/// switches to the new model's default effort.
+private struct ModelPicker: View {
+    @Binding var selection: LLMModel
+
+    var body: some View {
+        Picker("", selection: Binding(
+            get: { selection.key },
+            set: { key in
+                guard let entry = ModelCatalog.all.first(where: { $0.model.key == key }) else { return }
+                selection = entry.model.withReasoningEffort(entry.resolvedEffort(selection.reasoningEffort))
+            }
+        )) {
+            ForEach(LLMProvider.allCases) { provider in
+                Section(provider.displayName) {
+                    ForEach(ModelCatalog.models(for: provider)) { entry in
+                        Text(entry.displayName).tag(entry.model.key)
+                    }
+                }
+            }
+        }
+        .pickerStyle(.menu)
+    }
+}
+
+/// Picks one of the reasoning efforts the selected model supports.
+private struct ReasoningEffortPicker: View {
+    @Binding var selection: LLMModel
+
+    var body: some View {
+        let entry = ModelCatalog.entry(for: selection)
+        let efforts = entry?.reasoningEfforts ?? []
+        Picker("", selection: Binding(
+            get: { entry?.resolvedEffort(selection.reasoningEffort) ?? .medium },
+            set: { selection = selection.withReasoningEffort($0) }
+        )) {
+            ForEach(efforts) { effort in
+                Text(effort == entry?.defaultReasoningEffort ? "\(effort.displayName) (default)" : effort.displayName)
+                    .tag(effort)
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(efforts.count < 2)
     }
 }
