@@ -179,6 +179,14 @@ nonisolated final class LocalTranscriptionEngine: @unchecked Sendable {
     static let idleUnloadDelay: TimeInterval = 300
 
     private let queue = DispatchQueue(label: "IT.TinyAI.LocalTranscription", qos: .userInitiated)
+
+    private init() {
+        // ggml's Metal residency sets abort in a static destructor when the
+        // process exits ("[rsets->data count] == 0"), crashing TinyAI on
+        // quit. They only keep memory wired between runs, so turn them off
+        // before the first model loads.
+        setenv("GGML_METAL_NO_RESIDENCY", "1", 1)
+    }
     private var model: OpaquePointer?
     private var session: OpaquePointer?
     private var loadedPath: String?
@@ -196,6 +204,12 @@ nonisolated final class LocalTranscriptionEngine: @unchecked Sendable {
 
     func unload() {
         queue.async { self.freeModel() }
+    }
+
+    /// Free the model before the process exits. ggml releases its Metal
+    /// device in a static destructor and aborts if a model still holds it.
+    func unloadNow() {
+        queue.sync { self.freeModel() }
     }
 
     /// Begin a recording.  Streaming models receive audio while the user

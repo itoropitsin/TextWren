@@ -354,7 +354,7 @@ final class VoiceCoordinator: ObservableObject {
         }
 
         state = .transcribing
-        logger.notice("Transcribing \(samples.count) samples")
+        logger.notice("Transcribing \(samples.count) samples, level \(AudioCoding.rmsLevel(samples), privacy: .public)")
         let settings = store.transcription
         let localRecording = self.localRecording
         let realtime = self.realtime

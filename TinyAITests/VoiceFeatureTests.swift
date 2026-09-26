@@ -659,7 +659,7 @@ private func spokenSamples(_ text: String) throws -> [Float] {
     return Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
 }
 
-private func transcribeLocally(_ model: LocalTranscriptionModel, samples: [Float]) async throws -> (live: String, final: String) {
+private func transcribeLocally(_ model: LocalTranscriptionModel, samples: [Float], unload: Bool = true) async throws -> (live: String, final: String) {
     let partials = PartialBox()
     let recording = LocalTranscriptionEngine.shared.begin(model: model, language: "en") { partials.set($0) }
     // Feed in microphone-sized chunks, like the audio tap does.
@@ -670,6 +670,7 @@ private func transcribeLocally(_ model: LocalTranscriptionModel, samples: [Float
         index = end
     }
     let final = try await recording.finish(allSamples: samples)
+    if unload { LocalTranscriptionEngine.shared.unloadNow() }
     return (partials.get(), final)
 }
 
@@ -698,6 +699,18 @@ struct LocalEngineTests {
         #expect(result.final.lowercased().contains("lazy dog"))
         // Live text arrived while audio was still being fed.
         #expect(result.live.lowercased().contains("fox"))
+    }
+
+    @Test(.enabled(if: LocalModelManager.isDownloaded(.nemotronStreaming35)),
+          arguments: [LocalTranscriptionModel.nemotronStreaming35, .canary180MFlash])
+    func consecutiveRecordingsReuseTheLoadedModel(_ model: LocalTranscriptionModel) async throws {
+        guard LocalModelManager.isDownloaded(model) else { return }
+        let samples = try spokenSamples("The quick brown fox jumps over the lazy dog.")
+        for _ in 0..<3 {
+            let result = try await transcribeLocally(model, samples: samples, unload: false)
+            #expect(result.final.lowercased().contains("fox"))
+        }
+        LocalTranscriptionEngine.shared.unloadNow()
     }
 
     @Test(.enabled(if: LocalModelManager.isDownloaded(.canary180MFlash)))

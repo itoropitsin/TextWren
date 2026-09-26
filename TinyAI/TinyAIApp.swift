@@ -314,6 +314,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         startKeyboardMonitoringIfPermitted()
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        LocalTranscriptionEngine.shared.unloadNow()
+    }
+
     deinit {
         if let permissionObserver {
             NotificationCenter.default.removeObserver(permissionObserver)
