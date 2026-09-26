@@ -4,90 +4,84 @@ struct HelpView: View {
     @Environment(\.dismiss) private var dismiss
 
     private var appVersion: String {
-        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-
-        if let short, !short.isEmpty {
-            if let build, !build.isEmpty, build != short {
-                return "\(short) (\(build))"
-            }
-            return short
-        }
-
-        return "1.21"
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        guard !short.isEmpty else { return "" }
+        return build.isEmpty || build == short ? short : "\(short) (\(build))"
     }
 
     var body: some View {
-        VStack(spacing: 18) {
-            Text("Help")
-                .font(.title2)
-                .padding(.top)
+        VStack(spacing: 0) {
+            VStack(spacing: 4) {
+                Text("TinyAI Help")
+                    .font(.title2.weight(.semibold))
+                Text("Translate, fix and rewrite text without leaving the app you are in.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 20)
+            .padding(.bottom, 14)
+
+            Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    GroupBox("What TinyAI does") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("TinyAI is a small macOS utility that sends your text to OpenAI or Google Gemini and shows the result in two panels:")
-                            Text("• Starred 1: your primary action (for example, “Translate”).")
-                            Text("• Starred 2: a custom action you choose (plus extra buttons to run other custom actions).")
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 22) {
+                    HelpSection(title: "Get started", systemImage: "sparkles") {
+                        HelpStep(number: 1, text: "Open **Settings → API** and paste an OpenAI or Google Gemini API key. TinyAI checks the key before saving it.")
+                        HelpStep(number: 2, text: "In **Settings → Primary**, choose what the two result panels show: Translate or one of your actions.")
+                        HelpStep(number: 3, text: "Allow **Accessibility** and **Input Monitoring** when macOS asks, so the popup hotkey and Replace work in other apps.")
                     }
 
-                    GroupBox("Getting started") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("1) Open Settings and paste an OpenAI or Google Gemini API key.")
-                            Text("2) Choose what “Starred 1” does (built‑in Translate or one of your custom actions).")
-                            Text("3) Create custom actions: give each button a title, pick a model and reasoning level, and write a short prompt.")
-                            Text("Tip: In the main window you can trigger custom actions with ⌘1, ⌘2, ⌘3, …")
-                            Text("Tip: Use {{targetLanguage}} in prompts to reuse the language picker (for example: “Translate to {{targetLanguage}} and fix grammar.”).")
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HelpSection(title: "Popup in any app", systemImage: "cursorarrow.rays") {
+                        HelpBullet("Select text and press **⌘C twice** to open the popup. You can change the hotkey in Settings → Hotkeys.")
+                        HelpBullet("**Replace** puts the result back in place of your selection; **Copy** copies it with formatting.")
+                        HelpBullet("Run other actions with the buttons or with **⌘1 … ⌘5**.")
                     }
 
-                    GroupBox("Examples (custom action prompts)") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Example 1 — Summary")
-                                    .font(.headline)
-                                Text("Prompt: “Summarize the text in 3 bullet points. Keep it under 60 words.”")
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Divider()
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Example 2 — Rewrite")
-                                    .font(.headline)
-                                Text("Prompt: “Rewrite the text as a polite and concise email. Preserve key details and names.”")
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HelpSection(title: "Main window", systemImage: "macwindow") {
+                        HelpBullet("Paste or type into **Source text**. Results update shortly after you stop typing.")
+                        HelpBullet("Pick a language in the menu, or **Auto** to switch between your main and additional languages.")
+                        HelpBullet("Formatting is kept: lists, links, bold, italic and code.")
                     }
 
-                    GroupBox("Popup window") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("You can also use the Popup hotkey from any app to open a compact window for the selected text.")
-                            Text("Configure the hotkey and its trigger mode (single / double press) in Settings.")
-                                .foregroundColor(.secondary)
+                    HelpSection(title: "Custom actions", systemImage: "bolt.fill") {
+                        HelpBullet("Create up to five actions in **Settings → Actions**: a title, a prompt, a model and a reasoning level.")
+                        HelpBullet("Use **{{targetLanguage}}** in a prompt to insert the language chosen in the menu.")
+                        HelpBullet("**Settings → Style** adds shared tone or terminology to the actions you select.")
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Example prompts")
+                                .font(.subheadline.weight(.semibold))
+                            HelpExample(title: "Summary", prompt: "Summarize in 3 bullet points, under 60 words.")
+                            HelpExample(title: "Polite email", prompt: "Rewrite as a polite, concise email. Keep names, dates and action items.")
+                            HelpExample(title: "Shorter", prompt: "Make the text about half as long without losing meaning.")
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
                     }
 
-                    Text("Your API keys are stored locally in macOS Keychain. Requests are sent when an action runs; editing text in the main window starts its configured actions after a short pause. Settings changes are applied after you press Save.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    HelpSection(title: "Models and reasoning", systemImage: "cpu") {
+                        HelpBullet("Choose a model and a reasoning level for Translate and for each action.")
+                        HelpBullet("**Low** is fast and enough for translation and grammar. Use **Medium** or **High** for explanations and harder tasks.")
+                    }
+
+                    Label {
+                        Text("API keys are stored in the macOS Keychain. Text is sent to the selected provider only when an action runs.")
+                    } icon: {
+                        Image(systemName: "lock.fill")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 8)
+                .padding(20)
             }
 
-            HStack {
-                Text("Version \(appVersion)")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            Divider()
 
+            HStack {
+                if !appVersion.isEmpty {
+                    Text("Version \(appVersion)")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button("Close") {
                     dismiss()
@@ -95,9 +89,79 @@ struct HelpView: View {
                 .hoverHighlight()
                 .keyboardShortcut(.cancelAction)
             }
-            .padding(.horizontal)
-            .padding(.bottom)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
         }
-        .frame(width: 560, height: 620)
+        .frame(width: 560, height: 640)
+    }
+}
+
+private struct HelpSection<Content: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .foregroundStyle(.primary)
+            VStack(alignment: .leading, spacing: 6) {
+                content
+            }
+            .padding(.leading, 28)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct HelpStep: View {
+    let number: Int
+    let text: LocalizedStringKey
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("\(number)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(Color.accentColor))
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct HelpBullet: View {
+    let text: LocalizedStringKey
+
+    init(_ text: LocalizedStringKey) {
+        self.text = text
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("•")
+                .foregroundStyle(.secondary)
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct HelpExample: View {
+    let title: String
+    let prompt: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title)
+                .font(.callout.weight(.medium))
+                .frame(width: 90, alignment: .leading)
+            Text("“\(prompt)”")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }

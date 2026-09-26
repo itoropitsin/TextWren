@@ -1083,3 +1083,95 @@ struct PromptTests {
         #expect(!handling.hasPrefix(" "))
     }
 }
+
+@MainActor
+struct RichTextHTMLParserTests {
+    private func prepared(_ html: String) throws -> PreparedRichText {
+        try #require(RichTextConverter.prepare(html: html))
+    }
+
+    private func traits(of prepared: PreparedRichText, containing text: String) -> NSFontDescriptor.SymbolicTraits {
+        let range = (prepared.attributed.string as NSString).range(of: text)
+        guard range.location != NSNotFound,
+              let font = prepared.attributed.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return [] }
+        return font.fontDescriptor.symbolicTraits
+    }
+
+    @Test func googleDocsWrapper_withNormalWeight_isNotBold() throws {
+        let html = #"<meta charset="utf-8"><b style="font-weight:normal;" id="docs-internal-guid-1234"><p dir="ltr"><span style="font-weight:400">Plain </span><span style="font-weight:700">Bold</span></p></b>"#
+        let result = try prepared(html)
+        #expect(result.plain == "Plain Bold")
+        #expect(!traits(of: result, containing: "Plain").contains(.bold))
+        #expect(traits(of: result, containing: "Bold").contains(.bold))
+    }
+
+    @Test func slackStyleList_withLinksAndCode_keepsStructure() throws {
+        let html = "<ul><li>First <a href=\"https://example.com/a?x=1&amp;y=2\">link</a></li><li>Run <code>make test</code><ul><li>nested</li></ul></li></ul><ol><li>one</li><li>two</li></ol>"
+        let result = try prepared(html)
+        #expect(result.plain == "• First link\n• Run make test\n  • nested\n1. one\n2. two")
+        let html2 = try #require(result.payload.html)
+        #expect(html2.contains("href=\"https://example.com/a?x=1&amp;y=2\""))
+        #expect(traits(of: result, containing: "make test").contains(.monoSpace))
+    }
+
+    @Test func webPageNoise_isSkipped_andEntitiesDecoded() throws {
+        let html = "<!DOCTYPE html><html><head><title>T</title><style>p{color:red}</style><script>alert(1)</script></head><body><!-- c --><p>Tom&nbsp;&amp;&nbsp;Jerry &mdash; &#8220;quote&#8221; &lt;tag&gt;</p><img src=\"https://tracker.example/p.gif\"></body></html>"
+        let result = try prepared(html)
+        #expect(result.plain == "Tom\u{00A0}&\u{00A0}Jerry \u{2014} \u{201C}quote\u{201D} <tag>")
+    }
+
+    @Test func whitespace_collapses_butLineBreaksStayInsideParagraph() throws {
+        let result = try prepared("<p>  one\n   two  <br>three </p><p>four</p>")
+        #expect(result.plain == "one two\nthree\nfour")
+        #expect(result.attributed.string == "one two\u{2028}three\nfour")
+    }
+
+    @Test func preformattedCode_keepsWhitespaceAndLines() throws {
+        let result = try prepared("<pre><code>\nfunc a() {\n    return 1\n}</code></pre>")
+        #expect(result.plain == "func a() {\n    return 1\n}")
+        #expect(traits(of: result, containing: "return").contains(.monoSpace))
+    }
+
+    @Test func tables_becomeTabSeparatedRows() throws {
+        let result = try prepared("<table><tr><th>Name</th><th>Role</th></tr><tr><td>Ann</td><td>Dev</td></tr></table>")
+        #expect(result.plain == "Name\tRole\nAnn\tDev")
+    }
+
+    @Test func largeClipboardHTML_parsesQuickly() throws {
+        let row = "<div><span style=\"font-weight:700\">Item</span> <a href=\"https://e.com/x\">link</a> text &amp; more</div>"
+        let html = String(repeating: row, count: 3000)
+        let start = Date()
+        _ = try prepared(html)
+        #expect(Date().timeIntervalSince(start) < 3)
+    }
+}
+
+@MainActor
+struct PasteFormattingRegressionTests {
+    @Test func slackParagraphBreaks_andLineBreaks_surviveIntoPastedHTML() throws {
+        let slack = #"<meta charset='utf-8'><b>Ivan</b> <span>[7:41 PM]</span><br><i>Link Janitor</i><span aria-label="&nbsp;" class="c-mrkdwn__br" data-stringify-type="paragraph-break"></span>Scanned 6 repos.<ul data-stringify-type="unordered-list"><li data-stringify-indent="0">docs#25</li></ul>Detector check."#
+        let prepared = try #require(RichTextConverter.prepare(html: slack))
+        #expect(prepared.plain == "Ivan [7:41 PM]\nLink Janitor\n\nScanned 6 repos.\n• docs#25\nDetector check.")
+        let html = try #require(prepared.payload.html)
+        #expect(html.contains("[7:41 PM]<em><br>Link Janitor</em><br><br>Scanned 6 repos."))
+        #expect(!html.contains("\u{2028}"))
+    }
+
+    @Test func emDashes_becomeHyphens_outsideCode() {
+        let text = "Link Janitor — run complete\n`a — b`\n```\nx — y\n```\n<code>c — d</code> end — ok"
+        #expect(text.replacingEmDashes() == "Link Janitor - run complete\n`a — b`\n```\nx — y\n```\n<code>c — d</code> end - ok")
+    }
+
+    @Test func displayString_showsEachListMarkerOnce() throws {
+        let prepared = RichTextConverter.prepare(markdown: "- one\n  - two\n1. three")
+        let display = RichTextConverter.displayAttributedString(from: prepared)
+        #expect(display.string == "• one\n• two\n1. three")
+        var hasTextLists = false
+        display.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: display.length)) { value, _, _ in
+            if let style = value as? NSParagraphStyle, !style.textLists.isEmpty { hasTextLists = true }
+        }
+        #expect(!hasTextLists)
+        // The payload used for Copy/Replace keeps real lists.
+        #expect(prepared.payload.html?.contains("<ul><li>one<ul><li>two</li></ul></li></ul><ol><li>three</li></ol>") == true)
+    }
+}

@@ -172,14 +172,6 @@ final class CachingKeychainClient: KeychainClient {
 
 enum KeychainStore {
     static let client: KeychainClient = CachingKeychainClient(base: SystemKeychainClient())
-
-    static func loadString(service: String, account: String) -> String? {
-        if case .value(let value) = client.readString(service: service, account: account, allowInteraction: false) {
-            return value
-        }
-        return nil
-    }
-
     static func saveString(_ value: String, service: String, account: String) -> Bool {
         client.saveString(value, service: service, account: account, allowInteraction: true)
     }

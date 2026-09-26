@@ -25,7 +25,7 @@ class DraggableWindow: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
-    
+
     override func mouseDown(with event: NSEvent) {
         let location = event.locationInWindow
         let isNearResizeEdge =

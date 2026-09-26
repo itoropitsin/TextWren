@@ -133,7 +133,7 @@ struct TinyAIApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var translationService = TranslationService()
     @StateObject private var keyboardMonitor = KeyboardMonitor()
-    
+
     var body: some Scene {
         WindowGroup {
             MainTranslationView()
@@ -142,7 +142,7 @@ struct TinyAIApp: App {
                 .onAppear {
                     appDelegate.translationService = translationService
                     appDelegate.keyboardMonitor = keyboardMonitor
-                    keyboardMonitor.onPopupHotkey = { [weak appDelegate] payload in
+                    keyboardMonitor.onPopupHotkey = { [weak appDelegate = appDelegate] payload in
                         appDelegate?.showTranslationPopup(with: payload)
                     }
                     appDelegate.startKeyboardMonitoringIfPermitted()
@@ -282,11 +282,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         return false
     }
-    
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Keep the app in the Dock so the main window is visible
         // NSApp.setActivationPolicy(.accessory)
-        
+
         guard !TinyAIRuntime.isTestEnvironment else { return }
 
         requestMissingPermissionsAtLaunchIfNeeded()
@@ -334,22 +334,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Manual retry entry point used by Settings. Unlike launch, this is
-    /// always allowed to ask macOS again because the user just requested it.
-    @discardableResult
-    func requestMissingPermissionsManually() -> Bool {
-        let granted = TinyAIPermissions.requestMissing(explicit: true)
-        startKeyboardMonitoringIfPermitted()
-        return granted
-    }
-
     func startKeyboardMonitoringIfPermitted() {
         guard !TinyAIRuntime.isTestEnvironment,
               TinyAIPermissions.allGranted else { return }
         _ = keyboardMonitor?.startMonitoringIfPermitted()
     }
-    
-    
+
     func showTranslationPopup(with payload: RichTextPayload) {
         // Ensure everything runs on the main thread
         DispatchQueue.main.async { [weak self] in
@@ -358,13 +348,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let translationService = self.translationService,
                 let keyboardMonitor = self.keyboardMonitor
             else { return }
-            
+
             // Close the previous window if it's open
             if let existingWindow = self.popupWindow {
                 existingWindow.close()
                 self.popupWindow = nil
             }
-            
+
             // IMPORTANT: Create the popup on the current desktop.
             // This ensures the new window is created on the same desktop
             // where the active app resides.
@@ -377,7 +367,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
-    
+
     private func createPopupWindow(payload: RichTextPayload, translationService: TranslationService, keyboardMonitor: KeyboardMonitor) {
         // Create the view on the main thread
         let popupView = TranslationPopupView(selectedText: payload.plain, selectedPayload: payload, onClose: { [weak self] in
@@ -388,7 +378,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         })
         .environmentObject(translationService)
         .environmentObject(keyboardMonitor)
-        
+
         // Create a hosting view with correct sizing
         let hostingView = FirstMouseHostingView(rootView: AnyView(popupView))
         hostingView.frame = NSRect(x: 0, y: 0, width: 420, height: 520)
@@ -399,7 +389,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if #available(macOS 10.15, *) {
             hostingView.layer?.cornerCurve = .continuous
         }
-        
+
         // Create a draggable window
         let window = DraggableWindow(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 520),
@@ -430,29 +420,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // The window is draggable via the custom header area
         window.isMovableByWindowBackground = false
-        
+
         // Find the active screen for correct positioning
         let mouseLocation = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { screen in
             screen.frame.contains(mouseLocation)
         } ?? NSScreen.main ?? NSScreen.screens.first ?? NSScreen.main!
-        
+
         let screenFrame = screen.frame
         let windowX = mouseLocation.x - 210
         let windowY = mouseLocation.y - 260
-        
+
         // Ensure the window stays within screen bounds
         let constrainedX = max(screenFrame.minX, min(windowX, screenFrame.maxX - 420))
         let constrainedY = max(screenFrame.minY, min(windowY, screenFrame.maxY - 520))
-        
+
         window.setFrameOrigin(NSPoint(x: constrainedX, y: constrainedY))
-        
+
         // Show the window WITHOUT activating the app.
         // Make it key so controls like the language Picker can open their menus
         // even when the app is not active (non-activating panels allow this).
         window.orderFrontRegardless()
         window.makeKey()
-        
+
         self.popupWindow = window
     }
 }

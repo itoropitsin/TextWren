@@ -200,10 +200,12 @@ class KeyboardMonitor: ObservableObject {
     @Published var isCustomActionHotkeysEnabled: Bool = false {
         didSet { tapState.update { $0.isCustomActionHotkeysEnabled = isCustomActionHotkeysEnabled } }
     }
+
     @Published var customActionHotkey: Int?
     @Published var popupHotkey: KeyboardShortcut {
         didSet { tapState.update { $0.popupHotkey = popupHotkey } }
     }
+
     @Published var popupHotkeyPressMode: PopupHotkeyPressMode {
         didSet { tapState.update { $0.popupHotkeyPressMode = popupHotkeyPressMode } }
     }
@@ -220,6 +222,7 @@ class KeyboardMonitor: ObservableObject {
         get { tapState.read(\.globalMonitoringEnabled) }
         set { tapState.update { $0.globalMonitoringEnabled = newValue } }
     }
+
     private var eventTap: CFMachPort? {
         get { tapState.eventTap }
         set { tapState.eventTap = newValue }
@@ -229,18 +232,22 @@ class KeyboardMonitor: ObservableObject {
         get { tapState.read(\.isProcessing) }
         set { tapState.update { $0.isProcessing = newValue } }
     }
+
     private var isProcessingCustomAction: Bool {
         get { tapState.read(\.isProcessingCustomAction) }
         set { tapState.update { $0.isProcessingCustomAction = newValue } }
     }
+
     private var isSimulatingCopy: Bool {
         get { tapState.read(\.isSimulatingCopy) }
         set { tapState.update { $0.isSimulatingCopy = newValue } }
     }
+
     private var pendingDoublePressPasteboardChangeCount: Int? {
         get { tapState.read(\.pendingDoublePressPasteboardChangeCount) }
         set { tapState.update { $0.pendingDoublePressPasteboardChangeCount = newValue } }
     }
+
     private var eventTapSetupAttempted = false
     private var lastPermissionState: Bool
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TinyAI", category: "KeyboardMonitor")
@@ -256,7 +263,7 @@ class KeyboardMonitor: ObservableObject {
         21: 4, // 4
         23: 5  // 5
     ]
-    
+
     init(globalMonitoringEnabled: Bool? = nil) {
         let monitoringEnabled: Bool
         if let globalMonitoringEnabled {
@@ -300,7 +307,7 @@ class KeyboardMonitor: ObservableObject {
             setupGlobalHotkey()
         }
     }
-    
+
     deinit {
         stopMonitoring()
         appActivationObservers.forEach(NotificationCenter.default.removeObserver)
@@ -327,6 +334,7 @@ class KeyboardMonitor: ObservableObject {
         if shortcut.modifiers == [.command] && shortcut.keyCode == 48 { // ⌘Tab
             return "⌘Tab is reserved by the system."
         }
+
         let screenshotKeyCodes: Set<Int64> = [20, 21, 23] // 3/4/5
         if shortcut.modifiers == [.command, .shift] && screenshotKeyCodes.contains(shortcut.keyCode) { // ⌘⇧3/4/5
             return "⌘⇧3/4/5 are reserved by the system for screenshots."
@@ -449,7 +457,7 @@ class KeyboardMonitor: ObservableObject {
         eventTapSetupAttempted = true
 
         let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
-        
+
         eventTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -462,19 +470,19 @@ class KeyboardMonitor: ObservableObject {
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         )
-        
+
         guard let eventTap = eventTap else {
             logger.error("Failed to create event tap")
             return
         }
-        
+
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
         guard let runLoopSource = runLoopSource else {
             CFMachPortInvalidate(eventTap)
             self.eventTap = nil
             return
         }
-        
+
         let thread = EventTapThread(source: runLoopSource)
         thread.startAndWait()
         eventTapThread = thread
@@ -620,6 +628,7 @@ class KeyboardMonitor: ObservableObject {
             }
             return
         }
+
         let pasteboard = NSPasteboard.general
 
         // The first ⌘C is asynchronous in applications such as Slack. Do not
@@ -958,7 +967,7 @@ class KeyboardMonitor: ObservableObject {
 
         return nil
     }
-    
+
     func stopMonitoring() {
         globalMonitoringEnabled = false
         if let eventTap = eventTap {

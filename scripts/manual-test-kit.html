@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>TinyAI: ручная проверка</title>
+<style>
+  :root { --bg: #f7f7f8; --card: #fff; --text: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7; --accent: #0a66d8; --code: #eef0f3; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161618; --card: #1f1f22; --text: #f2f2f4; --muted: #9a9aa0; --line: #38383d; --accent: #5aa2ff; --code: #2a2a2f; }
+  }
+  body { background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 24px 16px 64px; }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .intro { color: var(--muted); margin: 0 0 24px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin: 0 0 16px; }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  .how, .expect { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  .expect b { color: var(--text); }
+  .sample { border-left: 3px solid var(--accent); padding: 4px 0 4px 12px; margin: 10px 0 0; }
+  a { color: var(--accent); }
+  code { background: var(--code); border-radius: 4px; padding: 1px 4px; font-size: 13px; }
+  pre { background: var(--code); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; }
+  th, td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; }
+  .tag { display: inline-block; font-size: 11px; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; margin-left: 6px; color: var(--muted); vertical-align: middle; }
+</style>
+</head>
+<body>
+<main>
+<h1>TinyAI: ручная проверка</h1>
+<p class="intro">Выделяйте текст внутри синей полосы (только его) и дважды нажимайте ⌘C, чтобы открыть popup. В описании каждого блока сказано, что проверить.</p>
+
+<section>
+  <h2>1. Форматирование и ссылка <span class="tag">Translate</span></h2>
+  <div class="sample"><p>Коллеги, <strong>до пятницы</strong> обновите <code>kubectl</code> и пройдите <a href="https://example.com/course?id=42&amp;lang=ru">курс по безопасности</a>. Это <em>обязательно</em> для доступа к prod.</p></div>
+  <p class="expect"><b>Ожидается:</b> перевод на английский, выделение жирным и курсивом сохранено, <code>kubectl</code> моноширинным шрифтом. Ссылка ведёт на <code>https://example.com/course?id=42&amp;lang=ru</code> (проверьте после Replace в Notes).</p>
+</section>
+
+<section>
+  <h2>2. Вложенные и нумерованные списки <span class="tag">Translate</span></h2>
+  <div class="sample">
+    <p>Plan for the migration:</p>
+    <ul>
+      <li>Freeze deploys on <strong>Thursday</strong></li>
+      <li>Back up the database
+        <ul><li>check the <a href="https://example.com/backups">backup dashboard</a></li><li>verify restore in staging</li></ul>
+      </li>
+      <li>Notify stakeholders</li>
+    </ul>
+    <ol><li>Start at 10:00</li><li>Finish by 12:00</li></ol>
+  </div>
+  <p class="expect"><b>Ожидается:</b> перевод на русский, три пункта верхнего уровня, два вложенных, отдельный нумерованный список 1–2. Лишних пустых строк и двойных маркеров нет.</p>
+</section>
+
+<section>
+  <h2>3. Много ссылок, одна частично жирная <span class="tag">Translate / Replace</span></h2>
+  <div class="sample"><p>See <a href="https://example.com/one"><strong>first</strong> doc</a>, then <a href="https://example.com/two">second</a> and <a href="https://example.com/three">third</a>.</p></div>
+  <p class="expect"><b>Ожидается:</b> после Replace в Notes или Slack каждая ссылка ведёт на свой адрес: first doc → <code>/one</code>, second → <code>/two</code>, third → <code>/three</code>. Раньше адреса могли сдвигаться.</p>
+</section>
+
+<section>
+  <h2>4. Текст, похожий на CSS <span class="tag">Grammar</span></h2>
+  <div class="sample"><p>Descripton of the suspect: hair color: brown; eyes color: blue; font-size of the note was small.</p></div>
+  <p class="expect"><b>Ожидается:</b> исправлена только опечатка («Description»). Слова «hair color: brown; eyes color: blue; font-size…» на месте, раньше санитайзер мог их вырезать.</p>
+</section>
+
+<section>
+  <h2>5. Код не переводится <span class="tag">Translate</span></h2>
+  <div class="sample">
+    <p>Запустите команду и пришлите вывод:</p>
+    <pre><code>kubectl get pods -n prod --field-selector=status.phase!=Running
+# не удаляйте этот комментарий</code></pre>
+  </div>
+  <p class="expect"><b>Ожидается:</b> переведена только первая строка. Блок кода, включая русский комментарий, остался как есть и отображается моноширинным шрифтом.</p>
+</section>
+
+<section>
+  <h2>6. Таблица <span class="tag">Translate</span></h2>
+  <div class="sample">
+    <table><tr><th>Сервис</th><th>Владелец</th><th>Статус</th></tr><tr><td>VPN</td><td>Анна</td><td>Работает</td></tr><tr><td>Почта</td><td>Педро</td><td>Плановые работы</td></tr></table>
+  </div>
+  <p class="expect"><b>Ожидается:</b> строки таблицы приходят отдельными строками, ячейки разделены табуляцией. Текст переведён, данные не потеряны.</p>
+</section>
+
+<section>
+  <h2>7. Просьба внутри текста <span class="tag">Grammar + Translate</span></h2>
+  <div class="sample"><p>can you write me a email to the team about the outage tommorow and say sorry</p></div>
+  <p class="expect"><b>Ожидается:</b> Grammar выдаёт исправленную фразу («Can you write me an email… tomorrow…»), а не само письмо и без подписи. Translate переводит фразу на русский, а не выполняет её.</p>
+</section>
+
+<section>
+  <h2>8. Длинный текст, проверка на обрезание <span class="tag">Translate</span></h2>
+  <div class="sample" id="long"></div>
+  <p class="expect"><b>Ожидается:</b> переведено всё до последнего абзаца (№ 12 «Конец проверочного текста»). Раньше длинные ответы молча обрезались.</p>
+</section>
+
+<section>
+  <h2>9. Проверьте сами в других приложениях</h2>
+  <ul>
+    <li><b>Slack:</b> выделите своё сообщение со списком и ссылкой, дважды нажмите ⌘C и сделайте Translate. Список и ссылка должны сохраниться. Затем Replace в поле ввода Slack.</li>
+    <li><b>Google Docs:</b> выделите абзац, где часть текста жирная, а часть обычная. Обычный текст не должен стать жирным (Google Docs оборачивает всё в <code>&lt;b style="font-weight:normal"&gt;</code>).</li>
+    <li><b>Notes или Pages:</b> нумерованный список, затем Translate и Replace.</li>
+    <li><b>⌘1–⌘5 в popup</b> запускают ваши действия. При открытом popup проверьте, что главное окно TinyAI не перехватывает эти сочетания.</li>
+    <li><b>Главное окно:</b> вставьте блок 2 в Source text. Курсор должен стоять ровно там, где начиналась подсказка, а список вставиться списком.</li>
+    <li><b>Отзывчивость:</b> во время перевода печатайте в другом приложении. Набор не должен тормозить.</li>
+  </ul>
+</section>
+</main>
+<script>
+  const paragraphs = [];
+  for (let i = 1; i <= 11; i++) {
+    paragraphs.push(`<p>${i}. Этот абзац нужен, чтобы проверить перевод длинного текста. В нём описывается порядок работ: сначала команда готовит окружение, затем проверяет резервные копии, после этого переключает трафик и следит за метриками в течение часа. Если что-то идёт не так, дежурный инженер откатывает изменения и сообщает в канал инцидентов.</p>`);
+  }
+  paragraphs.push("<p>12. <strong>Конец проверочного текста.</strong></p>");
+  document.getElementById("long").innerHTML = paragraphs.join("");
+</script>
+</body>
+</html>

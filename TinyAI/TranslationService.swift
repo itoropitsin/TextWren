@@ -286,6 +286,7 @@ class TranslationService: ObservableObject {
             }
         }
     }
+
     @Published var preferredTargetLanguage: String = "English" {
         didSet {
             let normalized = normalizedLanguageSelection(preferredTargetLanguage)
@@ -371,7 +372,7 @@ class TranslationService: ObservableObject {
     private let legacyModelCatalogDefaultsKeys = [
         "LLMModelsV1", "LLMModelVisibilityV1", "LLMModelAvailabilityV1", "DeletedLLMModelsV1"
     ]
-    
+
     init(keychainClient: KeychainClient? = nil, defaults: UserDefaults = TinyAIRuntime.userDefaults) {
         keychainService = "IT.TinyAI"
         self.keychainClient = keychainClient ?? KeychainStore.client
@@ -433,10 +434,6 @@ class TranslationService: ObservableObject {
         applyBuiltInDefaultsIfNeeded(force: false)
         normalizeStarredActionIds()
         normalizeActionStyleContextActionKeys()
-    }
-    
-    func saveAPIKey(_ key: String) {
-        saveAPIKey(key, for: .openAI)
     }
 
     func saveAPIKey(_ key: String, for provider: LLMProvider) {
@@ -520,24 +517,6 @@ class TranslationService: ObservableObject {
             break
         }
         return effectiveResult
-    }
-
-    @MainActor
-    func validateAndSaveAPIKey(_ key: String, for provider: LLMProvider) async -> Result<Void, LLMKeyValidationError> {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            setAPIKey("", for: provider)
-            return .success(())
-        }
-
-        let result = await validateAPIKey(trimmed, for: provider)
-        switch result {
-        case .success:
-            setAPIKey(trimmed, for: provider)
-            return .success(())
-        case .failure(let error):
-            return .failure(error)
-        }
     }
 
     /// Validate a draft key without changing the saved key or model catalog.
@@ -706,6 +685,7 @@ Rules:
         customActions[0].prompt = defaultGrammarPrompt
         customActions[0].model = defaultModel
     }
+
     @discardableResult
     private func persistAPIKey(_ value: String, provider: LLMProvider) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -790,6 +770,7 @@ Rules:
             geminiAPIKey = key
         }
     }
+
     private func loadBuiltInTranslateModel() -> LLMModel {
         if let data = defaults.data(forKey: builtInTranslateModelDefaultsKeyV2),
            let saved = try? JSONDecoder().decode(LLMModel.self, from: data) {
@@ -846,8 +827,10 @@ Rules:
             let message: String?
             let status: String?
         }
+
         let error: GeminiError
     }
+
     private func parseOpenAIErrorMessage(from data: Data) -> String? {
         if let apiError = try? jsonDecoder.decode(APIErrorResponse.self, from: data) {
             return apiError.error.message
@@ -892,6 +875,7 @@ Rules:
         guard let first = customActions.first, first.id == id else {
             return false
         }
+
         let title = first.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let prompt = first.prompt
         if (title == "Translate" || title == "Перевод") && prompt.contains("You are a professional translator") {
@@ -907,6 +891,7 @@ Rules:
         guard customActions.count >= 1 else {
             return
         }
+
         let title = customActions[0].title.trimmingCharacters(in: .whitespacesAndNewlines)
         let prompt = customActions[0].prompt
 
@@ -1059,46 +1044,9 @@ Rules:
         return prompt
     }
 
-    private func translateHTMLToMarkdownSystemPrompt(languageMode: TranslationLanguageMode, actionKey: String?) -> String {
-        var prompt = """
-You are a professional translator.
-
-Input is HTML.
-\(Self.translationDirectionInstruction(for: languageMode))
-
-Rules:
-- \(Self.inputIsContentRule) Translate them like any other text.
-- For automatic direction, inspect text nodes for the dominant language; do not infer it from tags, attributes, URLs, or other markup.
-- Use the HTML input only as formatting guidance.
-- Preserve lists, numbering, headings, and emphasis from the input (bold/italic/links) using Markdown.
-- Preserve every link destination exactly. You may translate or correct the visible link label, but never change its hidden address. Remove a link only when its linked content is removed or the user explicitly asks for it.
-- Outside code blocks and inline code, use the standard Markdown marker "- " for unordered lists; never use a private-use font glyph or unknown placeholder as a list marker.
-- Preserve code blocks and code spans exactly, including private-use characters that are part of code.
-- Do not invent emphasis that wasn't present unless required for clarity.
-- Preserve line breaks and paragraph structure.
-- Output only Markdown (no HTML, no code fences).
-"""
-        let style = translationStyleContext.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !style.isEmpty {
-            prompt += "\n\nTranslation style context:\n\(style)"
-        }
-        if let actionStyle = actionStyleContextIfEnabled(forActionKey: actionKey) {
-            prompt += "\n\n\(Self.actionStyleContextLabel):\n\(actionStyle)"
-        }
-        return prompt
-    }
     private func buildHTMLTranslateRequestBody(html: String, languageMode: TranslationLanguageMode, model: LLMModel, actionKey: String?) -> [String: Any] {
         buildChatRequestBody(
             systemPrompt: translateHTMLSystemPrompt(languageMode: languageMode, actionKey: actionKey),
-            userText: html,
-            model: model,
-            temperature: 0.2
-        )
-    }
-
-    private func buildHTMLToMarkdownTranslateRequestBody(html: String, languageMode: TranslationLanguageMode, model: LLMModel, actionKey: String?) -> [String: Any] {
-        buildChatRequestBody(
-            systemPrompt: translateHTMLToMarkdownSystemPrompt(languageMode: languageMode, actionKey: actionKey),
             userText: html,
             model: model,
             temperature: 0.2
@@ -1129,6 +1077,7 @@ Rules:
         guard let actionKey, actionStyleContextActionKeys.contains(actionKey) else {
             return nil
         }
+
         let trimmed = actionStyleContext.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return nil
@@ -1142,6 +1091,7 @@ Rules:
         }
         return "\(prompt)\n\n\(Self.actionStyleContextLabel):\n\(actionStyle)"
     }
+
     private func buildRequestBody(
         text: String,
         languageMode: TranslationLanguageMode,
@@ -1155,6 +1105,7 @@ Rules:
             temperature: 0.3
         )
     }
+
     /// Single place where the Chat-style body is assembled.  Model-family
     /// specific parameters (reasoning effort, sampling, output budget) come
     /// from `LLMRequestPolicy` so a new model generation needs no edits here.
@@ -1167,74 +1118,80 @@ Rules:
         )
     }
 
-	    private struct ChatCompletionResponse: Decodable {
-	        struct Choice: Decodable {
-	            struct Message: Decodable {
-	                let content: String?
-	            }
-	            let message: Message
-	            let finish_reason: String?
-	        }
-	        let choices: [Choice]
-	    }
+    private struct ChatCompletionResponse: Decodable {
+        struct Choice: Decodable {
+            struct Message: Decodable {
+                let content: String?
+            }
 
-	    private struct OpenAIResponsesResponse: Decodable {
-	        struct OutputItem: Decodable {
-	            struct ContentItem: Decodable {
-	                let type: String?
-	                let text: String?
-	            }
-	            let type: String?
-	            let content: [ContentItem]?
-	        }
-	        struct IncompleteDetails: Decodable {
-	            let reason: String?
-	        }
-	        let status: String?
-	        let incomplete_details: IncompleteDetails?
-	        let output_text: String?
-	        let output: [OutputItem]?
-	    }
+            let message: Message
+            let finish_reason: String?
+        }
 
-	    private struct APIErrorResponse: Decodable {
-	        struct APIError: Decodable {
-	            let message: String
-	        }
-	        let error: APIError
-	    }
+        let choices: [Choice]
+    }
 
-	    private func extractText(from response: OpenAIResponsesResponse) -> String? {
-	        if let outputText = response.output_text?.normalizedPlainText(),
-	           !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-	            return outputText
-	        }
+    private struct OpenAIResponsesResponse: Decodable {
+        struct OutputItem: Decodable {
+            struct ContentItem: Decodable {
+                let type: String?
+                let text: String?
+            }
 
-	        let text = (response.output ?? [])
-	            .flatMap { $0.content ?? [] }
-	            .compactMap { $0.text }
-	            .joined(separator: "\n")
-	            .normalizedPlainText()
+            let type: String?
+            let content: [ContentItem]?
+        }
 
-	        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
-	    }
+        struct IncompleteDetails: Decodable {
+            let reason: String?
+        }
 
-	    @discardableResult
-	    private func performOpenAIChatCompletion(apiKey: String, requestBody: [String: Any], completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
-	        guard !apiKey.isEmpty else {
-	            completion(.failure(TranslationError.apiKeyMissing))
-	            return nil
-	        }
+        let status: String?
+        let incomplete_details: IncompleteDetails?
+        let output_text: String?
+        let output: [OutputItem]?
+    }
 
-	        if let modelName = requestBody["model"] as? String,
-	           LLMRequestPolicy.usesOpenAIResponsesAPI(modelName),
-	           let responsesBody = LLMRequestPolicy.openAIResponsesBody(fromChatBody: requestBody) {
-	            return performOpenAIResponses(apiKey: apiKey, requestBody: responsesBody, completion: completion)
-	        }
+    private struct APIErrorResponse: Decodable {
+        struct APIError: Decodable {
+            let message: String
+        }
 
-	        guard let url = URL(string: openAIChatCompletionsURLString) else {
-	            completion(.failure(TranslationError.invalidURL))
-	            return nil
-	        }
+        let error: APIError
+    }
+
+    private func extractText(from response: OpenAIResponsesResponse) -> String? {
+        if let outputText = response.output_text?.normalizedPlainText(),
+        !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return outputText
+        }
+
+        let text = (response.output ?? [])
+        .flatMap { $0.content ?? [] }
+        .compactMap { $0.text }
+        .joined(separator: "\n")
+        .normalizedPlainText()
+
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+    }
+
+    @discardableResult
+    private func performOpenAIChatCompletion(apiKey: String, requestBody: [String: Any], completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
+        guard !apiKey.isEmpty else {
+            completion(.failure(TranslationError.apiKeyMissing))
+            return nil
+        }
+
+        if let modelName = requestBody["model"] as? String,
+        LLMRequestPolicy.usesOpenAIResponsesAPI(modelName),
+        let responsesBody = LLMRequestPolicy.openAIResponsesBody(fromChatBody: requestBody) {
+            return performOpenAIResponses(apiKey: apiKey, requestBody: responsesBody, completion: completion)
+        }
+
+        guard let url = URL(string: openAIChatCompletionsURLString) else {
+            completion(.failure(TranslationError.invalidURL))
+            return nil
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -1283,89 +1240,89 @@ Rules:
                         completion(.failure(TranslationError.invalidResponse))
                         return
                     }
-                    completion(.success(content.normalizedPlainText()))
+                    completion(.success(content.normalizedPlainText().replacingEmDashes()))
                 } catch {
                     completion(.failure(error))
                 }
             }
         }
-	        task.resume()
-	        return task
-	    }
+        task.resume()
+        return task
+    }
 
-	    @discardableResult
-	    private func performOpenAIResponses(apiKey: String, requestBody: [String: Any], completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
-	        guard !apiKey.isEmpty else {
-	            completion(.failure(TranslationError.apiKeyMissing))
-	            return nil
-	        }
+    @discardableResult
+    private func performOpenAIResponses(apiKey: String, requestBody: [String: Any], completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
+        guard !apiKey.isEmpty else {
+            completion(.failure(TranslationError.apiKeyMissing))
+            return nil
+        }
 
-	        guard let url = URL(string: openAIResponsesURLString) else {
-	            completion(.failure(TranslationError.invalidURL))
-	            return nil
-	        }
+        guard let url = URL(string: openAIResponsesURLString) else {
+            completion(.failure(TranslationError.invalidURL))
+            return nil
+        }
 
-	        var request = URLRequest(url: url)
-	        request.httpMethod = "POST"
-	        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-	        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-	        do {
-	            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-	        } catch {
-	            completion(.failure(error))
-	            return nil
-	        }
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        } catch {
+            completion(.failure(error))
+            return nil
+        }
 
-	        let task = session.dataTask(with: request) { [weak self] data, response, error in
-	            let statusCode = (response as? HTTPURLResponse)?.statusCode
+        let task = session.dataTask(with: request) { [weak self] data, response, error in
+            let statusCode = (response as? HTTPURLResponse)?.statusCode
 
-	            Task { @MainActor [weak self] in
-	                guard let self else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
 
-	                if let error {
-	                    completion(.failure(error))
-	                    return
-	                }
+                if let error {
+                    completion(.failure(error))
+                    return
+                }
 
-	                guard let data else {
-	                    completion(.failure(TranslationError.noData))
-	                    return
-	                }
+                guard let data else {
+                    completion(.failure(TranslationError.noData))
+                    return
+                }
 
-	                if let statusCode, statusCode != 200 {
-	                    let message = self.parseOpenAIErrorMessage(from: data)
-	                    if let message {
-	                        completion(.failure(TranslationError.apiError(message)))
-	                    } else {
-	                        completion(.failure(TranslationError.httpError(statusCode)))
-	                    }
-	                    return
-	                }
+                if let statusCode, statusCode != 200 {
+                    let message = self.parseOpenAIErrorMessage(from: data)
+                    if let message {
+                        completion(.failure(TranslationError.apiError(message)))
+                    } else {
+                        completion(.failure(TranslationError.httpError(statusCode)))
+                    }
+                    return
+                }
 
-	                do {
-	                    let decoded = try self.jsonDecoder.decode(OpenAIResponsesResponse.self, from: data)
-	                    if decoded.status == "incomplete" {
-	                        completion(.failure(
-	                            decoded.incomplete_details?.reason == "max_output_tokens"
-	                                ? TranslationError.outputTruncated
-	                                : TranslationError.invalidResponse
-	                        ))
-	                        return
-	                    }
-	                    guard let content = self.extractText(from: decoded) else {
-	                        completion(.failure(TranslationError.invalidResponse))
-	                        return
-	                    }
-	                    completion(.success(content.normalizedPlainText()))
-	                } catch {
-	                    completion(.failure(error))
-	                }
-	            }
-	        }
-	        task.resume()
-	        return task
-	    }
+                do {
+                    let decoded = try self.jsonDecoder.decode(OpenAIResponsesResponse.self, from: data)
+                    if decoded.status == "incomplete" {
+                        completion(.failure(
+                            decoded.incomplete_details?.reason == "max_output_tokens"
+                            ? TranslationError.outputTruncated
+                            : TranslationError.invalidResponse
+                        ))
+                        return
+                    }
+                    guard let content = self.extractText(from: decoded) else {
+                        completion(.failure(TranslationError.invalidResponse))
+                        return
+                    }
+                    completion(.success(content.normalizedPlainText().replacingEmDashes()))
+                } catch {
+                    completion(.failure(error))
+                }
+            }
+        }
+        task.resume()
+        return task
+    }
 
     private struct GeminiGenerateContentResponse: Decodable {
         struct Candidate: Decodable {
@@ -1373,9 +1330,11 @@ Rules:
                 struct Part: Decodable { let text: String? }
                 let parts: [Part]?
             }
+
             let content: Content?
             let finishReason: String?
         }
+
         let candidates: [Candidate]?
     }
 
@@ -1454,75 +1413,26 @@ Rules:
                     return
                 }
 
-	                do {
-	                    let decoded = try self.jsonDecoder.decode(GeminiGenerateContentResponse.self, from: data)
-	                    if decoded.candidates?.first?.finishReason == "MAX_TOKENS" {
-	                        completion(.failure(TranslationError.outputTruncated))
-	                        return
-	                    }
-	                    let text = (decoded.candidates?.first?.content?.parts?.compactMap(\.text).joined(separator: "\n") ?? "").normalizedPlainText()
-	                    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-	                        completion(.failure(TranslationError.invalidResponse))
-	                        return
-	                    }
-	                    completion(.success(text))
-	                } catch {
-	                    completion(.failure(error))
-	                }
+                do {
+                    let decoded = try self.jsonDecoder.decode(GeminiGenerateContentResponse.self, from: data)
+                    if decoded.candidates?.first?.finishReason == "MAX_TOKENS" {
+                        completion(.failure(TranslationError.outputTruncated))
+                        return
+                    }
+
+                    let text = (decoded.candidates?.first?.content?.parts?.compactMap(\.text).joined(separator: "\n") ?? "").normalizedPlainText()
+                    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        completion(.failure(TranslationError.invalidResponse))
+                        return
+                    }
+                    completion(.success(text.replacingEmDashes()))
+                } catch {
+                    completion(.failure(error))
+                }
             }
         }
         task.resume()
         return task
-    }
-    
-    func translate(text: String, targetLanguage: String, completion: @escaping (Result<String, Error>) -> Void) {
-        translate(text: text, targetLanguage: targetLanguage, modelOverride: nil, completion: completion)
-    }
-
-	    func translate(text: String, targetLanguage: String, modelOverride: LLMModel?, completion: @escaping (Result<String, Error>) -> Void) {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            completion(.failure(TranslationError.emptyText))
-            return
-        }
-        
-        isTranslating = true
-        errorMessage = nil
-
-	        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
-	        let languageMode = translationLanguageMode(for: targetLanguage)
-		        translateText(text: text, languageMode: languageMode, modelOverride: modelToUse) { [weak self] result in
-		            self?.isTranslating = false
-		            switch result {
-	            case .success:
-	                completion(result)
-	            case .failure(let error):
-	                if self?.isCancellationError(error) == true {
-	                    completion(result)
-	                    return
-	                }
-	                if let localizedError = error as? LocalizedError {
-	                    self?.errorMessage = localizedError.errorDescription
-	                } else {
-	                    self?.errorMessage = error.localizedDescription
-	                }
-	                completion(result)
-	            }
-	        }
-		    }
-
-    @discardableResult
-    func translateText(
-        text: String,
-        targetLanguage: String,
-        modelOverride: LLMModel?,
-        completion: @escaping (Result<String, Error>) -> Void
-    ) -> URLSessionDataTask? {
-        translateText(
-            text: text,
-            languageMode: translationLanguageMode(for: targetLanguage),
-            modelOverride: modelOverride,
-            completion: completion
-        )
     }
 
     @discardableResult
@@ -1532,31 +1442,31 @@ Rules:
         modelOverride: LLMModel?,
         completion: @escaping (Result<String, Error>) -> Void
     ) -> URLSessionDataTask? {
-	        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-	            completion(.failure(TranslationError.emptyText))
-	            return nil
-	        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            completion(.failure(TranslationError.emptyText))
+            return nil
+        }
 
-	        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
-	        let actionKey = TranslationService.builtInTranslateSelectionKey
-	        switch modelToUse.provider {
-	        case .openAI:
-	            let requestBody = buildRequestBody(
+        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
+        let actionKey = TranslationService.builtInTranslateSelectionKey
+        switch modelToUse.provider {
+            case .openAI:
+            let requestBody = buildRequestBody(
                 text: text,
                 languageMode: languageMode,
                 model: modelToUse,
                 actionKey: actionKey
             )
             return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody, completion: completion)
-	        case .gemini:
+            case .gemini:
             return performGeminiGenerateContent(
-	                apiKey: geminiAPIKey,
-	                model: modelToUse,
-	                systemPrompt: translateSystemPrompt(
+                apiKey: geminiAPIKey,
+                model: modelToUse,
+                systemPrompt: translateSystemPrompt(
                     languageMode: languageMode,
                     actionKey: actionKey
-	                ),
-	                userText: text,
+                ),
+                userText: text,
                 temperature: 0.3,
                 completion: completion
             )
@@ -1564,52 +1474,7 @@ Rules:
     }
 
     @discardableResult
-    func translateHTML(html: String, targetLanguage: String, modelOverride: LLMModel?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
-        translateHTML(
-            html: html,
-            languageMode: translationLanguageMode(for: targetLanguage),
-            modelOverride: modelOverride,
-            completion: completion
-        )
-    }
-
-    @discardableResult
     func translateHTML(html: String, languageMode: TranslationLanguageMode, modelOverride: LLMModel?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
-	        guard !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-	            completion(.failure(TranslationError.emptyText))
-	            return nil
-	        }
-
-	        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
-	        let actionKey = TranslationService.builtInTranslateSelectionKey
-	        switch modelToUse.provider {
-	        case .openAI:
-            let requestBody = buildHTMLTranslateRequestBody(html: html, languageMode: languageMode, model: modelToUse, actionKey: actionKey)
-	            return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody, completion: completion)
-	        case .gemini:
-            return performGeminiGenerateContent(
-	                apiKey: geminiAPIKey,
-	                model: modelToUse,
-                    systemPrompt: translateHTMLSystemPrompt(languageMode: languageMode, actionKey: actionKey),
-	                userText: html,
-                temperature: 0.2,
-                completion: completion
-            )
-        }
-    }
-
-    @discardableResult
-    func translateHTMLToMarkdown(html: String, targetLanguage: String, modelOverride: LLMModel?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
-        translateHTMLToMarkdown(
-            html: html,
-            languageMode: translationLanguageMode(for: targetLanguage),
-            modelOverride: modelOverride,
-            completion: completion
-        )
-    }
-
-    @discardableResult
-    func translateHTMLToMarkdown(html: String, languageMode: TranslationLanguageMode, modelOverride: LLMModel?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
         guard !html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             completion(.failure(TranslationError.emptyText))
             return nil
@@ -1618,14 +1483,14 @@ Rules:
         let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
         let actionKey = TranslationService.builtInTranslateSelectionKey
         switch modelToUse.provider {
-        case .openAI:
-            let requestBody = buildHTMLToMarkdownTranslateRequestBody(html: html, languageMode: languageMode, model: modelToUse, actionKey: actionKey)
+            case .openAI:
+            let requestBody = buildHTMLTranslateRequestBody(html: html, languageMode: languageMode, model: modelToUse, actionKey: actionKey)
             return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody, completion: completion)
-        case .gemini:
+            case .gemini:
             return performGeminiGenerateContent(
                 apiKey: geminiAPIKey,
                 model: modelToUse,
-                systemPrompt: translateHTMLToMarkdownSystemPrompt(languageMode: languageMode, actionKey: actionKey),
+                    systemPrompt: translateHTMLSystemPrompt(languageMode: languageMode, actionKey: actionKey),
                 userText: html,
                 temperature: 0.2,
                 completion: completion
@@ -1641,17 +1506,18 @@ Rules:
         modelOverride: LLMModel?,
         completion: @escaping (Result<String, Error>) -> Void
     ) -> URLSessionDataTask? {
-	        let normalizedText = text.normalizedPlainText()
-	        guard !normalizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-	            completion(.failure(TranslationError.emptyText))
-	            return nil
-	        }
+        let normalizedText = text.normalizedPlainText()
+        guard !normalizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            completion(.failure(TranslationError.emptyText))
+            return nil
+        }
 
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else {
             completion(.failure(TranslationError.customPromptMissing))
             return nil
         }
+
         let actionKey = actionId?.uuidString
         let formattingPrompt = """
         Task:
@@ -1670,14 +1536,14 @@ Rules:
         """
         let styledPrompt = appendActionStyleContext(to: formattingPrompt, actionKey: actionKey)
 
-	        isTranslating = true
-	        errorMessage = nil
+        isTranslating = true
+        errorMessage = nil
 
-	        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
-	        switch modelToUse.provider {
-	        case .openAI:
-	            let requestBody = buildCustomActionRequestBody(text: normalizedText, prompt: styledPrompt, model: modelToUse)
-	            return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody) { [weak self] result in
+        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
+        switch modelToUse.provider {
+            case .openAI:
+            let requestBody = buildCustomActionRequestBody(text: normalizedText, prompt: styledPrompt, model: modelToUse)
+            return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody) { [weak self] result in
                 self?.isTranslating = false
                 switch result {
                 case .success:
@@ -1694,8 +1560,8 @@ Rules:
                     }
                     completion(result)
                 }
-	        }
-	        case .gemini:
+            }
+            case .gemini:
             return performGeminiGenerateContent(
                 apiKey: geminiAPIKey,
                 model: modelToUse,
@@ -1722,7 +1588,7 @@ Rules:
                 }
             )
         }
-		    }
+    }
 
     @discardableResult
     func runCustomActionHTML(
@@ -1743,6 +1609,7 @@ Rules:
             completion(.failure(TranslationError.customPromptMissing))
             return nil
         }
+
         let actionKey = actionId?.uuidString
 
         isTranslating = true
@@ -1824,123 +1691,36 @@ Rules:
         }
     }
 
-    @discardableResult
-    func runCustomActionMarkdownFromHTML(html: String, prompt: String, actionId: UUID?, modelOverride: LLMModel?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
-        let trimmedHTML = html.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedHTML.isEmpty else {
-            completion(.failure(TranslationError.emptyText))
-            return nil
-        }
-
-        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPrompt.isEmpty else {
-            completion(.failure(TranslationError.customPromptMissing))
-            return nil
-        }
-        let actionKey = actionId?.uuidString
-
-        isTranslating = true
-        errorMessage = nil
-
-        let modelToUse = ModelCatalog.resolve(modelOverride ?? builtInTranslateModel)
-
-        let markdownPrompt = """
-System requirements (highest priority):
-- Input is HTML and output must be Markdown (no HTML, no code fences).
-- Use the HTML only as formatting guidance.
-- Preserve lists, numbering, headings, links, and emphasis from the input using Markdown.
-- Preserve every link destination exactly; edit only the visible link label and never change its hidden address. Change or remove a link only when the task explicitly asks for it or removes that content.
-- Outside code blocks and inline code, use the standard Markdown marker "- " for unordered lists; never use a private-use font glyph or unknown placeholder as a list marker.
-- Preserve code blocks and code spans exactly, including private-use characters that are part of code.
-- Keep the output readable and neatly formatted.
-
-Task:
-\(trimmedPrompt)
-
-\(Self.customActionInputHandling)
-"""
-        let styledPrompt = appendActionStyleContext(to: markdownPrompt, actionKey: actionKey)
-
-        switch modelToUse.provider {
-        case .openAI:
-            let requestBody = buildCustomActionRequestBody(text: trimmedHTML, prompt: styledPrompt, model: modelToUse)
-            return performOpenAIChatCompletion(apiKey: apiKey, requestBody: requestBody) { [weak self] result in
-                self?.isTranslating = false
-                switch result {
-                case .success:
-                    completion(result)
-                case .failure(let error):
-                    if self?.isCancellationError(error) == true {
-                        completion(result)
-                        return
-                    }
-                    if let localizedError = error as? LocalizedError {
-                        self?.errorMessage = localizedError.errorDescription
-                    } else {
-                        self?.errorMessage = error.localizedDescription
-                    }
-                    completion(result)
-                }
-            }
-        case .gemini:
-            return performGeminiGenerateContent(
-                apiKey: geminiAPIKey,
-                model: modelToUse,
-                systemPrompt: styledPrompt,
-                userText: trimmedHTML,
-                temperature: 0.2,
-                completion: { [weak self] result in
-                    self?.isTranslating = false
-                    switch result {
-                    case .success:
-                        completion(result)
-                    case .failure(let error):
-                        if self?.isCancellationError(error) == true {
-                            completion(result)
-                            return
-                        }
-                        if let localizedError = error as? LocalizedError {
-                            self?.errorMessage = localizedError.errorDescription
-                        } else {
-                            self?.errorMessage = error.localizedDescription
-                        }
-                        completion(result)
-                    }
-                }
-            )
-        }
+    private func isCancellationError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
-
-	    private func isCancellationError(_ error: Error) -> Bool {
-	        let nsError = error as NSError
-	        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
-	    }
 
 }
 
-	enum TranslationError: LocalizedError {
-	    case apiKeyMissing
-	    case emptyText
-	    case customPromptMissing
-	    case invalidURL
-	    case noData
-	    case invalidResponse
-	    case httpError(Int)
-	    case apiError(String)
-	    case outputTruncated
-    
+enum TranslationError: LocalizedError {
+    case apiKeyMissing
+    case emptyText
+    case customPromptMissing
+    case invalidURL
+    case noData
+    case invalidResponse
+    case httpError(Int)
+    case apiError(String)
+    case outputTruncated
+
     var errorDescription: String? {
         switch self {
         case .apiKeyMissing:
             return "API key is not set"
         case .emptyText:
             return "Text to translate is empty"
-	        case .customPromptMissing:
-	            return "Custom prompt is not set"
-	        case .invalidURL:
-	            return "Invalid URL"
-	        case .noData:
-	            return "No data received from the server"
+            case .customPromptMissing:
+            return "Custom prompt is not set"
+            case .invalidURL:
+            return "Invalid URL"
+            case .noData:
+            return "No data received from the server"
         case .invalidResponse:
             return "Invalid response format"
         case .httpError(let code):

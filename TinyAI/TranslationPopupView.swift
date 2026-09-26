@@ -22,22 +22,22 @@ struct TranslationPopupView: View {
     @State private var showError: Bool = false
     @State private var isPrimaryLoading: Bool = false
     @State private var isSecondaryLoading: Bool = false
-	    @State private var primaryRequestId: UUID = UUID()
-	    @State private var secondaryRequestId: UUID = UUID()
-	    @State private var primaryNetworkTask: URLSessionDataTask?
-	    @State private var secondaryNetworkTask: URLSessionDataTask?
+    @State private var primaryRequestId: UUID = UUID()
+    @State private var secondaryRequestId: UUID = UUID()
+    @State private var primaryNetworkTask: URLSessionDataTask?
+    @State private var secondaryNetworkTask: URLSessionDataTask?
         @State private var secondaryRunningActionId: UUID?
-	    @State private var primaryTitle: String = "Starred 1"
-	    @State private var secondaryTitle: String = "Starred 2"
-	    @State private var isLanguageMenuOpen: Bool = false
-	    @State private var languageButtonFrame: CGRect = .zero
-    
+    @State private var primaryTitle: String = "Starred 1"
+    @State private var secondaryTitle: String = "Starred 2"
+    @State private var isLanguageMenuOpen: Bool = false
+    @State private var languageButtonFrame: CGRect = .zero
+
     init(selectedText: String, selectedPayload: RichTextPayload? = nil, onClose: (() -> Void)? = nil) {
         self.selectedText = selectedText
         self.selectedPayload = selectedPayload
         self.onClose = onClose
     }
-    
+
     let languages = [TranslationService.languageAutoSelection] + TranslationService.supportedLanguages
 
     private struct FramePreferenceKey: PreferenceKey {
@@ -137,7 +137,7 @@ struct TranslationPopupView: View {
             .shadow(radius: 10, y: 6)
         }
     }
-    
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             VStack(spacing: 12) {
@@ -199,38 +199,38 @@ struct TranslationPopupView: View {
                 processText()
             }
         }
-	        .onDisappear {
-	            keyboardMonitor.isCustomActionHotkeysEnabled = false
-	            primaryNetworkTask?.cancel()
-	            secondaryNetworkTask?.cancel()
+        .onDisappear {
+            keyboardMonitor.isCustomActionHotkeysEnabled = false
+            primaryNetworkTask?.cancel()
+            secondaryNetworkTask?.cancel()
                 secondaryRunningActionId = nil
-	        }
+        }
         .onReceive(keyboardMonitor.$customActionHotkey) { hotkey in
             guard let hotkey else { return }
             runSecondaryAction(at: hotkey - 1)
         }
-	        .onChange(of: translationService.preferredTargetLanguage) { _, _ in
-	            isLanguageMenuOpen = false
-	            guard translationService.isStarredPrimaryBuiltInTranslate else { return }
-	            refreshTitles()
-	            processPrimaryText()
-	        }
-	        .onChange(of: translationService.starredPrimarySelectionKey) { _, _ in
-	            isLanguageMenuOpen = false
-	            refreshTitles()
-	            processPrimaryText()
-	        }
-	        .onChange(of: translationService.starredSecondaryActionId) { _, _ in
-	            isLanguageMenuOpen = false
-	            refreshTitles()
-	            processSecondaryText()
-	        }
-	        .onChange(of: translationService.builtInTranslateModel) { _, _ in
-	            isLanguageMenuOpen = false
-	            guard translationService.isStarredPrimaryBuiltInTranslate else { return }
-	            refreshTitles()
-	            processPrimaryText()
-	        }
+        .onChange(of: translationService.preferredTargetLanguage) { _, _ in
+            isLanguageMenuOpen = false
+            guard translationService.isStarredPrimaryBuiltInTranslate else { return }
+            refreshTitles()
+            processPrimaryText()
+        }
+        .onChange(of: translationService.starredPrimarySelectionKey) { _, _ in
+            isLanguageMenuOpen = false
+            refreshTitles()
+            processPrimaryText()
+        }
+        .onChange(of: translationService.starredSecondaryActionId) { _, _ in
+            isLanguageMenuOpen = false
+            refreshTitles()
+            processSecondaryText()
+        }
+        .onChange(of: translationService.builtInTranslateModel) { _, _ in
+            isLanguageMenuOpen = false
+            guard translationService.isStarredPrimaryBuiltInTranslate else { return }
+            refreshTitles()
+            processPrimaryText()
+        }
         .onReceive(translationService.$customActions) { _ in
             refreshTitles()
         }
@@ -284,7 +284,6 @@ struct TranslationPopupView: View {
         .background(Color(NSColor.controlBackgroundColor))
         .cornerRadius(10)
     }
-
 
     private var primarySection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -341,10 +340,10 @@ struct TranslationPopupView: View {
                         }
                         .buttonStyle(.bordered)
                         .hoverHighlight()
-	                        .disabled(
-	                            selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-	                            || (isSecondaryLoading && secondaryRunningActionId == action.id)
-	                        )
+                        .disabled(
+                            selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || (isSecondaryLoading && secondaryRunningActionId == action.id)
+                        )
                         .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: [.command])
                     }
                 }
@@ -380,9 +379,9 @@ struct TranslationPopupView: View {
         .layoutPriority(1)
     }
 
-	    private func processText() {
-	        let normalized = RichTextConverter.normalizedMarkdown(selectedText.normalizedPlainText())
-	        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    private func processText() {
+        let normalized = RichTextConverter.normalizedMarkdown(selectedText.normalizedPlainText())
+        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             primaryNetworkTask?.cancel()
             secondaryNetworkTask?.cancel()
             primaryOutputText = ""
@@ -394,43 +393,43 @@ struct TranslationPopupView: View {
             isPrimaryLoading = false
             isSecondaryLoading = false
             secondaryRunningActionId = nil
-	            return
-	        }
+            return
+        }
 
-	        processPrimaryText(using: normalized)
-	        processSecondaryText(using: normalized)
-	    }
+        processPrimaryText(using: normalized)
+        processSecondaryText(using: normalized)
+    }
 
-	    private func processPrimaryText() {
-	        let normalized = RichTextConverter.normalizedMarkdown(selectedText.normalizedPlainText())
-	        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-	        processPrimaryText(using: normalized)
-	    }
+    private func processPrimaryText() {
+        let normalized = RichTextConverter.normalizedMarkdown(selectedText.normalizedPlainText())
+        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        processPrimaryText(using: normalized)
+    }
 
-	    private func processPrimaryText(using text: String) {
-	        let primaryAction = translationService.starredPrimaryCustomAction()
-	        if translationService.isStarredPrimaryBuiltInTranslate {
-	            runBuiltInTranslate(target: .primary, text: text)
-	        } else {
-	            runAction(primaryAction, target: .primary, text: text)
-	        }
-	    }
+    private func processPrimaryText(using text: String) {
+        let primaryAction = translationService.starredPrimaryCustomAction()
+        if translationService.isStarredPrimaryBuiltInTranslate {
+            runBuiltInTranslate(target: .primary, text: text)
+        } else {
+            runAction(primaryAction, target: .primary, text: text)
+        }
+    }
 
-	    private func processSecondaryText() {
-	        let normalized = RichTextConverter.normalizedMarkdown(selectedText.normalizedPlainText())
-	        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-	        processSecondaryText(using: normalized)
-	    }
+    private func processSecondaryText() {
+        let normalized = RichTextConverter.normalizedMarkdown(selectedText.normalizedPlainText())
+        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        processSecondaryText(using: normalized)
+    }
 
-	    private func processSecondaryText(using text: String) {
-	        let secondaryAction = translationService.customActions.first(where: { $0.id == translationService.starredSecondaryActionId })
-	        runAction(secondaryAction, target: .secondary, text: text)
-	    }
+    private func processSecondaryText(using text: String) {
+        let secondaryAction = translationService.customActions.first(where: { $0.id == translationService.starredSecondaryActionId })
+        runAction(secondaryAction, target: .secondary, text: text)
+    }
 
-	    private enum OutputTarget {
-	        case primary
-	        case secondary
-	    }
+    private enum OutputTarget {
+        case primary
+        case secondary
+    }
 
     private func runAction(
         _ action: CustomAction?,
@@ -445,16 +444,16 @@ struct TranslationPopupView: View {
                 primaryOutputPayloadCache = nil
                 primaryPreparedOutput = nil
                 isPrimaryLoading = false
-	            case .secondary:
+                case .secondary:
                 secondaryTitle = "Starred 2"
                 secondaryOutputText = ""
-	                secondaryOutputPayloadCache = nil
-	                secondaryPreparedOutput = nil
-	                isSecondaryLoading = false
+                secondaryOutputPayloadCache = nil
+                secondaryPreparedOutput = nil
+                isSecondaryLoading = false
                     secondaryRunningActionId = nil
-	            }
-	            return
-	        }
+            }
+            return
+        }
 
         let fallbackTitle: String = {
             let index = translationService.customActions.firstIndex(where: { $0.id == action.id })
@@ -467,8 +466,8 @@ struct TranslationPopupView: View {
         let resolvedPrompt = prompt.replacingOccurrences(of: "{{targetLanguage}}", with: targetLanguagePromptValue)
         let emptyPromptMessage = "Configure the prompt and model for this action in Settings."
         let selectionHTML = preparedModelInputHTML()
-	        switch target {
-	        case .primary:
+        switch target {
+            case .primary:
             primaryTitle = title
             let requestId = UUID()
             primaryRequestId = requestId
@@ -484,31 +483,31 @@ struct TranslationPopupView: View {
                 showError = true
                 return
             }
-	            isPrimaryLoading = true
-	            primaryNetworkTask?.cancel()
-	            if let selectionHTML {
-	                primaryNetworkTask = translationService.runCustomActionHTML(html: selectionHTML, prompt: resolvedPrompt, actionId: action.id, modelOverride: action.model) { result in
-	                    guard primaryRequestId == requestId else { return }
-	                    isPrimaryLoading = false
+            isPrimaryLoading = true
+            primaryNetworkTask?.cancel()
+            if let selectionHTML {
+                primaryNetworkTask = translationService.runCustomActionHTML(html: selectionHTML, prompt: resolvedPrompt, actionId: action.id, modelOverride: action.model) { result in
+                    guard primaryRequestId == requestId else { return }
+                    isPrimaryLoading = false
                     switch result {
                     case .success(let output):
                         let prepared = preparedOutput(from: output, expectsHTML: true)
                         primaryOutputText = prepared.plain
                         primaryPreparedOutput = prepared
                         primaryOutputPayloadCache = prepared.payload
-	                    case .failure(let error):
-	                        if (error as? URLError)?.code == .cancelled { return }
-	                        primaryOutputText = ""
+                        case .failure(let error):
+                        if (error as? URLError)?.code == .cancelled { return }
+                        primaryOutputText = ""
                         primaryOutputPayloadCache = nil
                         primaryPreparedOutput = nil
                         translationService.errorMessage = error.localizedDescription
                         showError = true
                     }
                 }
-	            } else {
-	                primaryNetworkTask = translationService.runCustomAction(text: text, prompt: resolvedPrompt, actionId: action.id, modelOverride: action.model) { result in
-	                    guard primaryRequestId == requestId else { return }
-	                    isPrimaryLoading = false
+            } else {
+                primaryNetworkTask = translationService.runCustomAction(text: text, prompt: resolvedPrompt, actionId: action.id, modelOverride: action.model) { result in
+                    guard primaryRequestId == requestId else { return }
+                    isPrimaryLoading = false
                     switch result {
                     case .success(let text):
                         let prepared = RichTextConverter.prepare(markdown: text)
@@ -516,7 +515,7 @@ struct TranslationPopupView: View {
                         primaryPreparedOutput = prepared
                         primaryOutputPayloadCache = prepared.payload
                     case .failure(let error):
-	                        if (error as? URLError)?.code == .cancelled { return }
+                        if (error as? URLError)?.code == .cancelled { return }
                         primaryOutputText = ""
                         primaryOutputPayloadCache = nil
                         primaryPreparedOutput = nil
@@ -525,7 +524,7 @@ struct TranslationPopupView: View {
                     }
                 }
             }
-	        case .secondary:
+            case .secondary:
             secondaryTitle = title
                 secondaryRunningActionId = action.id
             let requestId = UUID()
@@ -534,46 +533,46 @@ struct TranslationPopupView: View {
             secondaryPreparedOutput = nil
             secondaryOutputText = ""
             if resolvedPrompt.isEmpty {
-	                isSecondaryLoading = false
+                isSecondaryLoading = false
                     secondaryRunningActionId = nil
-	                secondaryOutputText = ""
-	                secondaryPreparedOutput = nil
-	                secondaryOutputPayloadCache = nil
-	                translationService.errorMessage = emptyPromptMessage
-	                showError = true
-	                return
-	            }
-	            isSecondaryLoading = true
-	            secondaryNetworkTask?.cancel()
+                secondaryOutputText = ""
+                secondaryPreparedOutput = nil
+                secondaryOutputPayloadCache = nil
+                translationService.errorMessage = emptyPromptMessage
+                showError = true
+                return
+            }
+            isSecondaryLoading = true
+            secondaryNetworkTask?.cancel()
                 if let selectionHTML {
-	                    secondaryNetworkTask = translationService.runCustomActionHTML(html: selectionHTML, prompt: resolvedPrompt, actionId: action.id, modelOverride: action.model) { result in
+                secondaryNetworkTask = translationService.runCustomActionHTML(html: selectionHTML, prompt: resolvedPrompt, actionId: action.id, modelOverride: action.model) { result in
                         guard secondaryRequestId == requestId else { return }
                         isSecondaryLoading = false
                         secondaryRunningActionId = nil
                         switch result {
                         case .success(let output):
                             let prepared = preparedOutput(from: output, expectsHTML: true)
-	                            secondaryOutputText = prepared.plain
+                        secondaryOutputText = prepared.plain
                             secondaryPreparedOutput = prepared
                             secondaryOutputPayloadCache = prepared.payload
-		                        case .failure(let error):
-		                            if (error as? URLError)?.code == .cancelled { return }
-	                            secondaryOutputText = ""
-	                        secondaryOutputPayloadCache = nil
+                        case .failure(let error):
+                        if (error as? URLError)?.code == .cancelled { return }
+                        secondaryOutputText = ""
+                        secondaryOutputPayloadCache = nil
                         secondaryPreparedOutput = nil
                             translationService.errorMessage = error.localizedDescription
                             showError = true
                         }
                     }
                 } else {
-	                    secondaryNetworkTask = translationService.runCustomAction(text: text, prompt: resolvedPrompt, actionId: action.id, modelOverride: action.model) { result in
+                secondaryNetworkTask = translationService.runCustomAction(text: text, prompt: resolvedPrompt, actionId: action.id, modelOverride: action.model) { result in
                         guard secondaryRequestId == requestId else { return }
                         isSecondaryLoading = false
                         secondaryRunningActionId = nil
                         switch result {
                         case .success(let text):
                             let prepared = RichTextConverter.prepare(markdown: text)
-	                            secondaryOutputText = prepared.plain
+                        secondaryOutputText = prepared.plain
                             secondaryPreparedOutput = prepared
                             secondaryOutputPayloadCache = prepared.payload
                         case .failure(let error):
@@ -636,35 +635,35 @@ struct TranslationPopupView: View {
         }
     }
 
-	    private func requestBuiltInText(
-	        text: String,
-	        languageMode: TranslationLanguageMode,
-	        requestId: UUID
-	    ) -> URLSessionDataTask? {
-	        translationService.translateText(
-	            text: text,
-	            languageMode: languageMode,
-	            modelOverride: translationService.builtInTranslateModel
-	        ) { result in
-	            guard primaryRequestId == requestId else { return }
-	            switch result {
-	            case .success(let output):
-	                let prepared = RichTextConverter.prepare(markdown: output)
-	                isPrimaryLoading = false
-	                primaryOutputText = prepared.plain
-	                primaryPreparedOutput = prepared
-	                primaryOutputPayloadCache = prepared.payload
-	            case .failure(let error):
-	                if (error as? URLError)?.code == .cancelled { return }
-	                isPrimaryLoading = false
-	                primaryOutputText = ""
-	                primaryOutputPayloadCache = nil
-	                primaryPreparedOutput = nil
-	                translationService.errorMessage = error.localizedDescription
-	                showError = true
-	            }
-	        }
-	    }
+    private func requestBuiltInText(
+        text: String,
+        languageMode: TranslationLanguageMode,
+        requestId: UUID
+    ) -> URLSessionDataTask? {
+        translationService.translateText(
+            text: text,
+            languageMode: languageMode,
+            modelOverride: translationService.builtInTranslateModel
+        ) { result in
+            guard primaryRequestId == requestId else { return }
+            switch result {
+                case .success(let output):
+                let prepared = RichTextConverter.prepare(markdown: output)
+                isPrimaryLoading = false
+                primaryOutputText = prepared.plain
+                primaryPreparedOutput = prepared
+                primaryOutputPayloadCache = prepared.payload
+                case .failure(let error):
+                if (error as? URLError)?.code == .cancelled { return }
+                isPrimaryLoading = false
+                primaryOutputText = ""
+                primaryOutputPayloadCache = nil
+                primaryPreparedOutput = nil
+                translationService.errorMessage = error.localizedDescription
+                showError = true
+            }
+        }
+    }
 
     private func preparedOutput(from response: String, expectsHTML: Bool) -> PreparedRichText {
         if expectsHTML, let prepared = RichTextConverter.prepare(html: response) {
@@ -736,7 +735,7 @@ struct TranslationPopupView: View {
         return nil
     }
 
-	    private func runSecondaryAction(at index: Int) {
+    private func runSecondaryAction(at index: Int) {
         guard index >= 0 && index < translationService.customActions.count else {
             return
         }
@@ -746,12 +745,12 @@ struct TranslationPopupView: View {
             return
         }
 
-	        let action = translationService.customActions[index]
+        let action = translationService.customActions[index]
             if isSecondaryLoading, secondaryRunningActionId == action.id {
                 return
             }
-		    runAction(action, target: .secondary, text: normalized)
-	    }
+        runAction(action, target: .secondary, text: normalized)
+    }
 
     private func outputPayload(for target: OutputTarget) -> RichTextPayload {
         switch target {
@@ -763,6 +762,7 @@ struct TranslationPopupView: View {
             if let cached = primaryOutputPayloadCache {
                 return cached
             }
+
             let payload = RichTextConverter.prepare(markdown: primaryOutputText).payload
             primaryOutputPayloadCache = payload
             return payload
@@ -774,6 +774,7 @@ struct TranslationPopupView: View {
             if let cached = secondaryOutputPayloadCache {
                 return cached
             }
+
             let payload = RichTextConverter.prepare(markdown: secondaryOutputText).payload
             secondaryOutputPayloadCache = payload
             return payload

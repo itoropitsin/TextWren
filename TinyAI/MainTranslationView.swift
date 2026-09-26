@@ -22,11 +22,11 @@ struct MainTranslationView: View {
     @State private var primaryNetworkTask: URLSessionDataTask?
     @State private var secondaryNetworkTask: URLSessionDataTask?
     @State private var secondaryRunningActionId: UUID?
-	    @State private var primaryTitle: String = "Starred 1"
-	    @State private var secondaryTitle: String = "Starred 2"
-    
+    @State private var primaryTitle: String = "Starred 1"
+    @State private var secondaryTitle: String = "Starred 2"
+
     let languages = [TranslationService.languageAutoSelection] + TranslationService.supportedLanguages
-    
+
     var body: some View {
         HSplitView {
             // Left panel - source text
@@ -44,7 +44,7 @@ struct MainTranslationView: View {
                     .accessibilityLabel("Clear source text")
                     .disabled(sourceText.isEmpty)
                 }
-                
+
                 ZStack(alignment: .topLeading) {
                     if sourceText.isEmpty {
                         // Outer padding (8) + the text view's container inset
@@ -55,7 +55,7 @@ struct MainTranslationView: View {
                             .padding(18)
                             .allowsHitTesting(false)
                     }
-                    
+
                     RichTextEditor(prepared: $sourcePreparedInput, onChange: handleSourceTextChange)
                         .frame(minWidth: 220)
                         .scrollContentBackground(.hidden)
@@ -70,7 +70,7 @@ struct MainTranslationView: View {
             }
             .padding(16)
             .frame(minWidth: 340)
-            
+
             // Right panel - results
             VStack(alignment: .leading, spacing: 12) {
                 VSplitView {
@@ -107,32 +107,32 @@ struct MainTranslationView: View {
         .onAppear {
             refreshTitles()
         }
-	        .onChange(of: translationService.preferredTargetLanguage) { _, _ in
-	            guard translationService.isStarredPrimaryBuiltInTranslate else { return }
-	            refreshTitles()
-	            if !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-	                processPrimaryText()
-	            }
-	        }
-	        .onChange(of: translationService.starredPrimarySelectionKey) { _, _ in
-	            refreshTitles()
-	            if !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-	                processPrimaryText()
-	            }
-	        }
-	        .onChange(of: translationService.starredSecondaryActionId) { _, _ in
-	            refreshTitles()
-	            if !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-	                processSecondaryText()
-	            }
-	        }
-	        .onChange(of: translationService.builtInTranslateModel) { _, _ in
-	            guard translationService.isStarredPrimaryBuiltInTranslate else { return }
-	            refreshTitles()
-	            if !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-	                processPrimaryText()
-	            }
-	        }
+        .onChange(of: translationService.preferredTargetLanguage) { _, _ in
+            guard translationService.isStarredPrimaryBuiltInTranslate else { return }
+            refreshTitles()
+            if !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                processPrimaryText()
+            }
+        }
+        .onChange(of: translationService.starredPrimarySelectionKey) { _, _ in
+            refreshTitles()
+            if !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                processPrimaryText()
+            }
+        }
+        .onChange(of: translationService.starredSecondaryActionId) { _, _ in
+            refreshTitles()
+            if !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                processSecondaryText()
+            }
+        }
+        .onChange(of: translationService.builtInTranslateModel) { _, _ in
+            guard translationService.isStarredPrimaryBuiltInTranslate else { return }
+            refreshTitles()
+            if !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                processPrimaryText()
+            }
+        }
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .environmentObject(translationService)
@@ -456,7 +456,7 @@ struct MainTranslationView: View {
         .frame(minHeight: 0, maxHeight: .infinity)
         .layoutPriority(1)
     }
-    
+
     private func clearSourceText() {
         primaryNetworkTask?.cancel()
         secondaryNetworkTask?.cancel()
@@ -484,9 +484,9 @@ struct MainTranslationView: View {
         RichTextPasteboard.write(preparedPayload, to: pasteboard)
     }
 
-	    private func processText() {
-	        let normalized = RichTextConverter.normalizedMarkdown(sourceText.normalizedPlainText())
-	        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    private func processText() {
+        let normalized = RichTextConverter.normalizedMarkdown(sourceText.normalizedPlainText())
+        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             primaryNetworkTask?.cancel()
             secondaryNetworkTask?.cancel()
             primaryOutputText = ""
@@ -498,43 +498,43 @@ struct MainTranslationView: View {
             isPrimaryLoading = false
             isSecondaryLoading = false
             secondaryRunningActionId = nil
-	            return
-	        }
+            return
+        }
 
-	        let html = RichTextConverter.modelHTML(from: sourcePreparedInput)
-	        processPrimaryText(using: normalized, html: html)
-	        processSecondaryText(using: normalized, html: html)
-	    }
+        let html = RichTextConverter.modelHTML(from: sourcePreparedInput)
+        processPrimaryText(using: normalized, html: html)
+        processSecondaryText(using: normalized, html: html)
+    }
 
-	    private func processPrimaryText() {
-	        let normalized = RichTextConverter.normalizedMarkdown(sourceText.normalizedPlainText())
-	        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-	        processPrimaryText(using: normalized, html: RichTextConverter.modelHTML(from: sourcePreparedInput))
-	    }
+    private func processPrimaryText() {
+        let normalized = RichTextConverter.normalizedMarkdown(sourceText.normalizedPlainText())
+        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        processPrimaryText(using: normalized, html: RichTextConverter.modelHTML(from: sourcePreparedInput))
+    }
 
-	    private func processPrimaryText(using text: String, html: String?) {
-	        let primaryAction = translationService.starredPrimaryCustomAction()
-	        if translationService.isStarredPrimaryBuiltInTranslate {
-	            runBuiltInTranslate(target: .primary, text: text, html: html)
-	        } else {
-	            runAction(primaryAction, target: .primary, text: text, html: html)
-	        }
-	    }
+    private func processPrimaryText(using text: String, html: String?) {
+        let primaryAction = translationService.starredPrimaryCustomAction()
+        if translationService.isStarredPrimaryBuiltInTranslate {
+            runBuiltInTranslate(target: .primary, text: text, html: html)
+        } else {
+            runAction(primaryAction, target: .primary, text: text, html: html)
+        }
+    }
 
-	    private func processSecondaryText() {
-	        let normalized = RichTextConverter.normalizedMarkdown(sourceText.normalizedPlainText())
-	        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-	        processSecondaryText(using: normalized, html: RichTextConverter.modelHTML(from: sourcePreparedInput))
-	    }
+    private func processSecondaryText() {
+        let normalized = RichTextConverter.normalizedMarkdown(sourceText.normalizedPlainText())
+        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        processSecondaryText(using: normalized, html: RichTextConverter.modelHTML(from: sourcePreparedInput))
+    }
 
-	    private func processSecondaryText(using text: String, html: String?) {
-	        let secondaryAction = translationService.customActions.first(where: { $0.id == translationService.starredSecondaryActionId })
-	        runAction(secondaryAction, target: .secondary, text: text, html: html)
-	    }
+    private func processSecondaryText(using text: String, html: String?) {
+        let secondaryAction = translationService.customActions.first(where: { $0.id == translationService.starredSecondaryActionId })
+        runAction(secondaryAction, target: .secondary, text: text, html: html)
+    }
 
-	    private func refreshTitles() {
-	        if translationService.isStarredPrimaryBuiltInTranslate {
-	            primaryTitle = "Translate"
+    private func refreshTitles() {
+        if translationService.isStarredPrimaryBuiltInTranslate {
+            primaryTitle = "Translate"
         } else {
             let primaryAction = translationService.starredPrimaryCustomAction()
             if let primaryAction {

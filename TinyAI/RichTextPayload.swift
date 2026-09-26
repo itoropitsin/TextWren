@@ -72,6 +72,14 @@ struct RichTextStructureSignature: Equatable, Sendable {
 enum RichTextHTMLSanitizer {
     static func sanitize(_ html: String) -> String {
         var result = html
+        // Slack marks a blank line between paragraphs with an empty span.
+        // Turn it into real breaks before empty wrappers are removed below.
+        result = replacingRegex(
+            in: result,
+            pattern: "<span\\b[^>]*data-stringify-type\\s*=\\s*[\"']paragraph-break[\"'][^>]*>\\s*</span\\s*>",
+            with: "<br><br>",
+            options: [.caseInsensitive]
+        )
         // List markers copied from rich-text applications can be duplicated:
         // once by the list structure and once as a literal character in the
         // text. Remove those characters before stripping the source font; some
@@ -130,6 +138,7 @@ enum RichTextHTMLSanitizer {
             guard let quoteIndex = attribute.firstIndex(where: { $0 == "\"" || $0 == "'" }) else {
                 return attribute
             }
+
             let quote = attribute[quoteIndex]
             let value = attribute[attribute.index(after: quoteIndex)..<attribute.index(before: attribute.endIndex)]
             let kept = value
@@ -205,6 +214,7 @@ enum RichTextHTMLSanitizer {
         guard let regex = RegexCache.regex(pattern, options: options) else {
             return input
         }
+
         let range = NSRange(input.startIndex..<input.endIndex, in: input)
         return regex.stringByReplacingMatches(in: input, options: [], range: range, withTemplate: replacement)
     }
@@ -233,6 +243,30 @@ enum RichTextHTMLSanitizer {
 }
 
 extension String {
+    /// Replace em dashes (—) with a hyphen (-) in model output, leaving code
+    /// untouched: Markdown code fences and spans, and HTML <pre>/<code>.
+    func replacingEmDashes() -> String {
+        guard contains("\u{2014}") else { return self }
+        guard let codePattern = RegexCache.regex(
+            "```[\\s\\S]*?(?:```|$)|`[^`\\n]*`|<pre\\b[\\s\\S]*?</pre\\s*>|<code\\b[\\s\\S]*?</code\\s*>",
+            options: [.caseInsensitive]
+        ) else {
+            return replacingOccurrences(of: "\u{2014}", with: "-")
+        }
+
+        let nsSelf = self as NSString
+        var result = ""
+        var cursor = 0
+        for match in codePattern.matches(in: self, range: NSRange(location: 0, length: nsSelf.length)) {
+            let prose = nsSelf.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            result += prose.replacingOccurrences(of: "\u{2014}", with: "-")
+            result += nsSelf.substring(with: match.range)
+            cursor = NSMaxRange(match.range)
+        }
+        result += nsSelf.substring(from: cursor).replacingOccurrences(of: "\u{2014}", with: "-")
+        return result
+    }
+
     func normalizedPlainText() -> String {
         self
             .replacingOccurrences(of: "\r\n", with: "\n")
@@ -331,16 +365,6 @@ enum RichTextListMarkers {
         return indent + "- " + rest
     }
 
-    static func displayMarkdownLine(_ line: String) -> String? {
-        guard let match = match(in: line), match.kind == .unordered else {
-            return nil
-        }
-
-        let indent = String(line[..<match.markerRange.lowerBound])
-        let rest = String(line[match.separatorRange.upperBound...])
-        return indent + "• " + rest
-    }
-
     static func markerRange(in paragraph: String) -> NSRange? {
         guard let match = match(in: paragraph) else { return nil }
         return NSRange(match.markerRange, in: paragraph)
@@ -401,28 +425,12 @@ enum RichTextConverter {
     /// callers can use the Markdown/text fallback deliberately.
     static func prepare(html: String) -> PreparedRichText? {
         let sanitized = RichTextHTMLSanitizer.sanitize(html)
-        guard RichTextHTMLSanitizer.isLikelyHTML(sanitized),
-              let data = sanitized.data(using: .utf8),
-              let parsed = try? NSAttributedString(
-                data: data,
-                options: [
-                    .documentType: NSAttributedString.DocumentType.html,
-                    .characterEncoding: String.Encoding.utf8.rawValue,
-                    .defaultAttributes: [
-                        NSAttributedString.Key.font: defaultFont,
-                        NSAttributedString.Key.foregroundColor: defaultColor
-                    ]
-                ],
-                documentAttributes: nil
-              ) else {
+        guard RichTextHTMLSanitizer.isLikelyHTML(sanitized) else {
             return nil
         }
 
-        let parsedWithoutSyntheticNewline = removingSyntheticFinalNewline(
-            from: parsed,
-            sourceHTML: sanitized
-        )
-        let withPrivateMarkers = replacingPrivateUseListMarkers(in: parsedWithoutSyntheticNewline)
+        let parsed = RichTextHTMLParser.attributedString(from: sanitized, baseFont: defaultFont)
+        let withPrivateMarkers = replacingPrivateUseListMarkers(in: parsed)
         let withoutDuplicateMarkers = normalizedListMarkers(in: withPrivateMarkers)
         let withSemanticFonts = normalizedFonts(in: withoutDuplicateMarkers, baseFont: defaultFont)
         let canonical = applyingBaseAttributesIfMissing(
@@ -434,6 +442,7 @@ enum RichTextConverter {
         let html = prepared.payload.html.map {
             preservingOriginalLinkDestinations(in: $0, sourceHTML: sanitized)
         }
+
         let payload = RichTextPayload(
             plain: prepared.plain,
             html: html,
@@ -774,7 +783,7 @@ enum RichTextConverter {
             let kind = list?.markerFormat == .decimal ? "ol" : "ul"
             let isCode = isMonospacedParagraph(in: attributed, range: contentRange)
             let baseContent = isCode
-                ? escapeHTML((attributed.string as NSString).substring(with: contentRange))
+                ? escapeHTML((attributed.string as NSString).substring(with: contentRange)).replacingOccurrences(of: "\u{2028}", with: "\n")
                 : htmlInline(from: attributed, range: contentRange)
             let isEmpty = baseContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             // HTML document parsing adds one final newline even when the
@@ -916,6 +925,7 @@ enum RichTextConverter {
                     counters[depth] = 1
                     activeLists[depth] = listID
                 }
+
                 let ordered = list.markerFormat == .decimal
                 let number = counters[depth, default: 1]
                 counters[depth] = ordered ? number + 1 : number
@@ -934,6 +944,22 @@ enum RichTextConverter {
                 NSAttributedString(string: insertion.text, attributes: insertion.attributes),
                 at: insertion.location
             )
+        }
+
+        // The markers are now visible text.  Drop the NSTextList from the
+        // display copy (keeping the indents): TextKit 2 draws list markers
+        // itself, which showed every marker twice ("•  • item", "1  1. item").
+        // Copy and Replace use the payload, which keeps the real lists.
+        let fullRange = NSRange(location: 0, length: mutable.length)
+        var restyled: [(NSRange, NSParagraphStyle)] = []
+        mutable.enumerateAttribute(.paragraphStyle, in: fullRange, options: []) { value, range, _ in
+            guard let style = value as? NSParagraphStyle, !style.textLists.isEmpty,
+                  let copy = style.mutableCopy() as? NSMutableParagraphStyle else { return }
+            copy.textLists = []
+            restyled.append((range, copy))
+        }
+        for (range, style) in restyled {
+            mutable.addAttribute(.paragraphStyle, value: style, range: range)
         }
         return mutable
     }
@@ -985,6 +1011,7 @@ enum RichTextConverter {
                   let close = anchor[anchor.index(after: open)...].firstIndex(of: "\"") else {
                 return anchor
             }
+
             let generated = decodeHTMLAttribute(String(anchor[anchor.index(after: open)..<close]))
             guard let source = sourceByKey[linkMatchKey(generated)], !source.isEmpty else {
                 return anchor
@@ -1030,6 +1057,7 @@ enum RichTextConverter {
         ) else {
             return []
         }
+
         let range = NSRange(html.startIndex..<html.endIndex, in: html)
         return regex.matches(in: html, options: [], range: range).compactMap { match in
             for index in 1...3 {
@@ -1076,6 +1104,7 @@ enum RichTextConverter {
                     counters[depth] = 1
                     activeLists[depth] = listID
                 }
+
                 let ordered = list.markerFormat == .decimal
                 let number = counters[depth, default: 1]
                 counters[depth] = ordered ? number + 1 : number
@@ -1145,7 +1174,9 @@ enum RichTextConverter {
         var result = ""
         attributed.enumerateAttributes(in: range, options: []) { attributes, subrange, _ in
             let text = (attributed.string as NSString).substring(with: subrange)
-            var value = escapeHTML(text)
+            // A line break inside a paragraph is U+2028, which HTML renders
+            // as a space; Slack and browsers need a real <br>.
+            var value = escapeHTML(text).replacingOccurrences(of: "\u{2028}", with: "<br>")
             let font = attributes[.font] as? NSFont
             let traits = font?.fontDescriptor.symbolicTraits ?? []
             let link = attributes[.link].flatMap { value -> String? in
@@ -1270,52 +1301,6 @@ enum RichTextConverter {
         return mutable
     }
 
-    private static func removingSyntheticFinalNewline(
-        from attributed: NSAttributedString,
-        sourceHTML: String
-    ) -> NSAttributedString {
-        guard attributed.string.hasSuffix("\n"),
-              !hasExplicitTerminalLineBreak(in: sourceHTML) else {
-            return attributed
-        }
-        let mutable = NSMutableAttributedString(attributedString: attributed)
-        mutable.deleteCharacters(in: NSRange(location: mutable.length - 1, length: 1))
-        return mutable
-    }
-
-    private static func hasExplicitTerminalLineBreak(in html: String) -> Bool {
-        // Strip closing block/document tags from the end. A final <br> then
-        // unambiguously represents a source newline, including inside the
-        // <pre><code>...</code></pre> form used for code blocks.
-        var value = html.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return false }
-
-        let closingTag = try? NSRegularExpression(
-            pattern: "</(?:html|body|p|div|li|ul|ol|pre|code|blockquote|td|th|h[1-6])\\s*>\\s*$",
-            options: [.caseInsensitive]
-        )
-        while let closingTag,
-              let match = closingTag.firstMatch(
-                in: value,
-                options: [],
-                range: NSRange(value.startIndex..<value.endIndex, in: value)
-              ) {
-            guard let range = Range(match.range, in: value) else { break }
-            value.removeSubrange(range)
-            value = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        let terminalBreak = try? NSRegularExpression(
-            pattern: "<br\\b[^>]*>\\s*$",
-            options: [.caseInsensitive]
-        )
-        return terminalBreak?.firstMatch(
-            in: value,
-            options: [],
-            range: NSRange(value.startIndex..<value.endIndex, in: value)
-        ) != nil
-    }
-
     private static func replacingPrivateUseListMarkers(in attributed: NSAttributedString) -> NSAttributedString {
         guard attributed.length > 0 else { return attributed }
 
@@ -1414,6 +1399,7 @@ enum RichTextConverter {
                 mutable.addAttribute(.font, value: baseFont, range: range)
             }
         }
+
         var missingForegroundRanges: [(range: NSRange, hasLink: Bool)] = []
         mutable.enumerateAttribute(.foregroundColor, in: fullRange, options: []) { value, range, _ in
             if value == nil {
@@ -1472,8 +1458,8 @@ enum RichTextPasteboard {
         let attributed: NSAttributedString? = (payload.rtf == nil || payload.html == nil)
             ? RichTextConverter.attributedString(from: payload)
             : nil
-        let rtf = payload.rtf ?? attributed.flatMap(RichTextConverter.rtf(from:))
-        let html = payload.html.map(RichTextHTMLSanitizer.sanitize) ?? attributed.flatMap(RichTextConverter.html(from:))
+        let rtf = payload.rtf ?? attributed.flatMap { RichTextConverter.rtf(from: $0) }
+        let html = payload.html.map { RichTextHTMLSanitizer.sanitize($0) } ?? attributed.flatMap { RichTextConverter.html(from: $0) }
 
         // Publish all representations on one item. Web editors can choose the
         // HTML representation while native editors can choose RTF, without
@@ -1509,5 +1495,609 @@ enum RegexCache {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
         cache[key] = regex
         return regex
+    }
+}
+
+/// Converts clipboard and model HTML into an attributed string without
+/// AppKit's HTML importer.  The importer runs WebKit through an XPC agent
+/// (which crashes on macOS 27 for HTML with links), spins the main run loop,
+/// is slow, and can load remote resources.  TinyAI only needs the semantic
+/// structure: paragraphs, lists, code, emphasis and links.
+///
+/// The output matches what the rest of the pipeline expects from an import:
+/// one "\n" between blocks, list items without marker text but with
+/// `NSTextList` paragraph styles (one list object per `<ul>`/`<ol>`),
+/// monospaced fonts for code, bold/italic font traits and `.link` URLs.
+/// A `<br>` inside a paragraph becomes U+2028 (as with the importer), and a
+/// `<br>` that ends the document becomes a real terminal newline.
+nonisolated struct RichTextHTMLParser {
+    private struct InlineFrame {
+        var tag: String
+        var bold: Bool?
+        var italic: Bool?
+        var monospace: Bool?
+        var link: String?
+        var strikethrough: Bool?
+        var underline: Bool?
+    }
+
+    private let baseFont: NSFont
+    private let result = NSMutableAttributedString()
+    private var frames: [InlineFrame] = []
+    private var listStack: [NSTextList] = []
+    private var itemStyles: [NSParagraphStyle?] = []
+    private var preDepth = 0
+    private var paragraphStart = 0
+    private var paragraphHasContent = false
+    private var forceEmptyParagraph = false
+    private var pendingSpace = false
+    /// Attributes of the text where a collapsed space occurred, so a space
+    /// before `<strong>` stays plain instead of becoming bold.
+    private var pendingSpaceAttributes: [NSAttributedString.Key: Any]?
+    private var lastParagraphWasForcedEmpty = false
+    private var pendingBreaks = 0
+    private var pendingTerminalBreak = false
+    private var cellIndexInRow = 0
+    /// Set right after `<pre>`: a newline directly after it is not content.
+    private var skipLeadingPreNewline = false
+
+    private static let blockTags: Set<String> = [
+        "p", "div", "section", "article", "header", "footer", "main", "aside", "nav",
+        "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "figure", "figcaption",
+        "ul", "ol", "li", "dl", "dt", "dd", "pre", "table", "thead", "tbody", "tfoot", "tr",
+        "address", "hr", "body", "html", "form", "fieldset", "details", "summary"
+    ]
+    private static let voidTags: Set<String> = [
+        "br", "img", "hr", "meta", "link", "input", "wbr", "area", "base", "col", "embed", "source", "track", "param"
+    ]
+    private static let skippedContentTags: Set<String> = [
+        "head", "style", "script", "title", "noscript", "template", "svg", "object", "iframe"
+    ]
+
+    static func attributedString(from html: String, baseFont: NSFont) -> NSAttributedString {
+        var parser = RichTextHTMLParser(baseFont: baseFont)
+        parser.parse(html)
+        return parser.result
+    }
+
+    private init(baseFont: NSFont) {
+        self.baseFont = baseFont
+    }
+
+    // MARK: Tokenizing
+
+    private mutating func parse(_ html: String) {
+        let scalars = Array(html.unicodeScalars)
+        var index = 0
+        var textStart = 0
+
+        func flushText(upTo end: Int) {
+            guard end > textStart else { return }
+            var text = String.UnicodeScalarView()
+            text.append(contentsOf: scalars[textStart..<end])
+            appendText(Self.decodeEntities(String(text)))
+        }
+
+        while index < scalars.count {
+            guard scalars[index] == "<" else {
+                index += 1
+                continue
+            }
+            // Comments, doctype and processing instructions.
+            if Self.hasPrefix(scalars, at: index, "<!--") {
+                flushText(upTo: index)
+                index = Self.find(scalars, "-->", from: index + 4).map { $0 + 3 } ?? scalars.count
+                textStart = index
+                continue
+            }
+            if index + 1 < scalars.count, scalars[index + 1] == "!" || scalars[index + 1] == "?" {
+                flushText(upTo: index)
+                index = Self.find(scalars, ">", from: index).map { $0 + 1 } ?? scalars.count
+                textStart = index
+                continue
+            }
+            // A "<" that does not start a tag is text.
+            let next = index + 1 < scalars.count ? scalars[index + 1] : " "
+            let isClosing = next == "/"
+            let nameStart = isClosing ? index + 2 : index + 1
+            guard nameStart < scalars.count,
+                  CharacterSet.letters.contains(scalars[nameStart]) else {
+                index += 1
+                continue
+            }
+            guard let tagEnd = Self.findTagEnd(scalars, from: nameStart) else {
+                index += 1
+                continue
+            }
+
+            flushText(upTo: index)
+            var tagText = String.UnicodeScalarView()
+            tagText.append(contentsOf: scalars[nameStart..<tagEnd])
+            let (name, attributes) = Self.parseTag(String(tagText))
+            index = tagEnd + 1
+            textStart = index
+
+            if isClosing {
+                closeTag(name)
+            } else if Self.skippedContentTags.contains(name) {
+                // Skip everything up to the matching close tag.
+                let closing = "</\(name)"
+                var search = index
+                while let found = Self.findCaseInsensitive(scalars, closing, from: search) {
+                    let after = found + closing.unicodeScalars.count
+                    if after >= scalars.count || !CharacterSet.alphanumerics.contains(scalars[after]) {
+                        index = Self.find(scalars, ">", from: after).map { $0 + 1 } ?? scalars.count
+                        break
+                    }
+                    search = after
+                }
+                if Self.findCaseInsensitive(scalars, closing, from: search) == nil {
+                    index = scalars.count
+                }
+                textStart = index
+            } else {
+                let selfClosing = tagText.last == "/"
+                openTag(name, attributes: attributes)
+                if selfClosing && !Self.voidTags.contains(name) {
+                    closeTag(name)
+                }
+            }
+        }
+        flushText(upTo: scalars.count)
+        finish()
+    }
+
+    // MARK: Structure
+
+    private mutating func openTag(_ name: String, attributes: [String: String]) {
+        switch name {
+        case "br":
+            if preDepth > 0 {
+                appendNewline()
+                // A <br> that ends a code block is a real newline.
+                pendingTerminalBreak = true
+            } else {
+                pendingBreaks += 1
+                pendingSpace = false
+            }
+            return
+        case "img", "meta", "link", "input", "wbr", "area", "base", "col", "embed", "source", "track", "param":
+            return
+        case "hr":
+            endParagraph()
+            return
+        case "ul", "ol":
+            endParagraph()
+            listStack.append(NSTextList(markerFormat: name == "ol" ? .decimal : .disc, options: 0))
+        case "li":
+            endParagraph()
+            itemStyles.append(listStack.isEmpty ? nil : Self.listStyle(for: listStack))
+        case "pre":
+            endParagraph()
+            preDepth += 1
+            skipLeadingPreNewline = true
+        case "tr":
+            endParagraph()
+            cellIndexInRow = 0
+        case "td", "th":
+            if cellIndexInRow > 0 {
+                appendRaw("\t", attributes: currentAttributes())
+            }
+            cellIndexInRow += 1
+            pendingSpace = false
+        default:
+            if Self.blockTags.contains(name) {
+                endParagraph()
+            }
+        }
+
+        var frame = InlineFrame(tag: name)
+        switch name {
+        case "b", "strong": frame.bold = true
+        case "h1", "h2", "h3", "h4", "h5", "h6", "th", "dt": frame.bold = true
+        case "i", "em", "cite", "dfn", "var": frame.italic = true
+        case "code", "tt", "kbd", "samp", "pre": frame.monospace = true
+        case "s", "del", "strike": frame.strikethrough = true
+        case "u", "ins": frame.underline = true
+        case "a":
+            if let href = attributes["href"]?.trimmingCharacters(in: .whitespacesAndNewlines), !href.isEmpty {
+                frame.link = href
+            }
+        default:
+            break
+        }
+        if let style = attributes["style"] {
+            Self.apply(style: style, to: &frame)
+        }
+        frames.append(frame)
+    }
+
+    private mutating func closeTag(_ name: String) {
+        guard !Self.voidTags.contains(name) else { return }
+        // Pop to the matching frame; ignore stray closing tags.
+        guard let frameIndex = frames.lastIndex(where: { $0.tag == name }) else {
+            if Self.blockTags.contains(name) { endParagraph() }
+            return
+        }
+
+        let isBlock = Self.blockTags.contains(name)
+        if isBlock {
+            endParagraph()
+        }
+        frames.removeSubrange(frameIndex...)
+
+        switch name {
+        case "ul", "ol":
+            if !listStack.isEmpty { listStack.removeLast() }
+        case "li":
+            if !itemStyles.isEmpty { itemStyles.removeLast() }
+        case "pre":
+            preDepth = max(0, preDepth - 1)
+        default:
+            break
+        }
+    }
+
+    // MARK: Text
+
+    private mutating func appendText(_ text: String) {
+        guard !text.isEmpty else { return }
+        let attributes = currentAttributes()
+
+        if preDepth > 0 {
+            var value = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            if skipLeadingPreNewline {
+                if value.hasPrefix("\n") { value.removeFirst() }
+                skipLeadingPreNewline = false
+            }
+
+            let lines = value.components(separatedBy: "\n")
+            for (lineIndex, line) in lines.enumerated() {
+                if lineIndex > 0 { appendNewline() }
+                if !line.isEmpty {
+                    flushPendingBreaksInline()
+                    appendRaw(line, attributes: attributes)
+                    paragraphHasContent = true
+                }
+            }
+            return
+        }
+
+        // Collapse HTML whitespace (not U+00A0) to single spaces.
+        var collapsed = ""
+        var sawSpace = false
+        for character in text {
+            if character == " " || character == "\n" || character == "\t" || character == "\r" || character == "\u{0C}" {
+                sawSpace = true
+            } else {
+                if sawSpace { collapsed.append(" ") }
+                sawSpace = false
+                collapsed.append(character)
+            }
+        }
+
+        let leadingSpace = text.first.map { $0 == " " || $0 == "\n" || $0 == "\t" || $0 == "\r" } ?? false
+        if collapsed.hasPrefix(" ") { collapsed.removeFirst() }
+
+        if collapsed.isEmpty {
+            if paragraphHasContent || pendingBreaks > 0 {
+                if !pendingSpace { pendingSpaceAttributes = attributes }
+                pendingSpace = true
+            }
+            return
+        }
+        if leadingSpace && (paragraphHasContent || pendingBreaks > 0) && !pendingSpace {
+            pendingSpace = true
+            pendingSpaceAttributes = attributes
+        }
+        flushPendingBreaksInline()
+        if pendingSpace && paragraphHasContent {
+            appendRaw(" ", attributes: pendingSpaceAttributes ?? attributes)
+        }
+        pendingSpace = sawSpace
+        pendingSpaceAttributes = sawSpace ? attributes : nil
+        appendRaw(collapsed, attributes: attributes)
+        paragraphHasContent = true
+        pendingTerminalBreak = false
+    }
+
+    /// `<br>` followed by more text in the same paragraph.
+    private mutating func flushPendingBreaksInline() {
+        guard pendingBreaks > 0 else { return }
+        if paragraphHasContent {
+            appendRaw(String(repeating: "\u{2028}", count: pendingBreaks), attributes: currentAttributes())
+        } else {
+            // Leading breaks in a paragraph are empty lines.
+            for _ in 0..<pendingBreaks {
+                forceEmptyParagraph = true
+                appendNewline()
+            }
+        }
+        pendingBreaks = 0
+        pendingSpace = false
+    }
+
+    private mutating func appendRaw(_ text: String, attributes: [NSAttributedString.Key: Any]) {
+        result.append(NSAttributedString(string: text, attributes: attributes))
+        pendingTerminalBreak = false
+        lastParagraphWasForcedEmpty = false
+    }
+
+    private mutating func appendNewline() {
+        lastParagraphWasForcedEmpty = forceEmptyParagraph && !paragraphHasContent
+        result.append(NSAttributedString(string: "\n", attributes: currentAttributes()))
+        applyParagraphStyle()
+        paragraphStart = result.length
+        paragraphHasContent = false
+        forceEmptyParagraph = false
+        pendingSpace = false
+        pendingSpaceAttributes = nil
+    }
+
+    /// Close the current paragraph at a block boundary.
+    private mutating func endParagraph() {
+        if pendingBreaks > 0 {
+            if paragraphHasContent {
+                // A trailing <br> ends the line; it only survives as a real
+                // newline when it is the last thing in the document.
+                pendingTerminalBreak = true
+            } else {
+                forceEmptyParagraph = true
+            }
+            pendingBreaks = 0
+        }
+        guard paragraphHasContent || forceEmptyParagraph else {
+            pendingSpace = false
+            return
+        }
+
+        let keepTerminalBreak = pendingTerminalBreak
+        appendNewline()
+        pendingTerminalBreak = keepTerminalBreak
+    }
+
+    private mutating func finish() {
+        if pendingBreaks > 0, paragraphHasContent {
+            pendingTerminalBreak = true
+            pendingBreaks = 0
+        }
+        if paragraphHasContent || forceEmptyParagraph {
+            applyParagraphStyle()
+            if pendingTerminalBreak || forceEmptyParagraph {
+                result.append(NSAttributedString(string: "\n", attributes: currentAttributes()))
+                applyParagraphStyle()
+            }
+        } else if result.string.hasSuffix("\n") && !pendingTerminalBreak && !lastParagraphWasForcedEmpty {
+            // Blocks are separated, not terminated, by newlines.
+            result.deleteCharacters(in: NSRange(location: result.length - 1, length: 1))
+        }
+    }
+
+    private func applyParagraphStyle() {
+        let range = NSRange(location: paragraphStart, length: result.length - paragraphStart)
+        guard range.length > 0, let style = itemStyles.last ?? nil else { return }
+        result.addAttribute(.paragraphStyle, value: style, range: range)
+    }
+
+    private func currentAttributes() -> [NSAttributedString.Key: Any] {
+        var bold = false, italic = false, monospace = false, strikethrough = false, underline = false
+        var link: String?
+        for frame in frames {
+            if let value = frame.bold { bold = value }
+            if let value = frame.italic { italic = value }
+            if let value = frame.monospace { monospace = value }
+            if let value = frame.strikethrough { strikethrough = value }
+            if let value = frame.underline { underline = value }
+            if let value = frame.link { link = value }
+        }
+
+        var font = monospace
+            ? NSFont.monospacedSystemFont(ofSize: baseFont.pointSize, weight: bold ? .bold : .regular)
+            : NSFont.systemFont(ofSize: baseFont.pointSize, weight: bold ? .bold : .regular)
+        if italic {
+            font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+        }
+
+        var attributes: [NSAttributedString.Key: Any] = [.font: font]
+        if let link {
+            attributes[.link] = URL(string: link) ?? link
+        }
+        if strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        if underline && link == nil { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        return attributes
+    }
+
+    private static func listStyle(for lists: [NSTextList]) -> NSParagraphStyle {
+        let depth = lists.count - 1
+        let style = NSMutableParagraphStyle()
+        style.textLists = lists
+        style.firstLineHeadIndent = CGFloat(depth * 20)
+        style.headIndent = CGFloat((depth + 1) * 20)
+        return style
+    }
+
+    // MARK: Attributes and entities
+
+    private static func apply(style: String, to frame: inout InlineFrame) {
+        for declaration in style.split(separator: ";") {
+            let parts = declaration.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            let property = parts[0].trimmingCharacters(in: .whitespaces).lowercased()
+            let value = parts[1].trimmingCharacters(in: .whitespaces).lowercased()
+            switch property {
+            case "font-weight":
+                if value == "bold" || value == "bolder" {
+                    frame.bold = true
+                } else if value == "normal" || value == "lighter" {
+                    frame.bold = false
+                } else if let weight = Int(value) {
+                    frame.bold = weight >= 600
+                }
+            case "font-style":
+                frame.italic = value.contains("italic") || value.contains("oblique")
+            case "text-decoration", "text-decoration-line":
+                if value.contains("line-through") { frame.strikethrough = true }
+                if value.contains("underline") { frame.underline = true }
+                if value == "none" { frame.strikethrough = false; frame.underline = false }
+            case "font-family":
+                if value.contains("monospace") || value.contains("courier") || value.contains("menlo") || value.contains("monaco") {
+                    frame.monospace = true
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    private static func parseTag(_ text: String) -> (String, [String: String]) {
+        let scalars = Array(text.unicodeScalars)
+        var index = 0
+        var name = ""
+        while index < scalars.count, !CharacterSet.whitespacesAndNewlines.contains(scalars[index]), scalars[index] != "/" {
+            name.unicodeScalars.append(scalars[index])
+            index += 1
+        }
+
+        var attributes: [String: String] = [:]
+        while index < scalars.count {
+            while index < scalars.count, CharacterSet.whitespacesAndNewlines.contains(scalars[index]) || scalars[index] == "/" {
+                index += 1
+            }
+
+            var key = ""
+            while index < scalars.count,
+                  !CharacterSet.whitespacesAndNewlines.contains(scalars[index]),
+                  scalars[index] != "=", scalars[index] != "/" {
+                key.unicodeScalars.append(scalars[index])
+                index += 1
+            }
+            guard !key.isEmpty else { break }
+            while index < scalars.count, CharacterSet.whitespacesAndNewlines.contains(scalars[index]) { index += 1 }
+            var value = ""
+            if index < scalars.count, scalars[index] == "=" {
+                index += 1
+                while index < scalars.count, CharacterSet.whitespacesAndNewlines.contains(scalars[index]) { index += 1 }
+                if index < scalars.count, scalars[index] == "\"" || scalars[index] == "'" {
+                    let quote = scalars[index]
+                    index += 1
+                    while index < scalars.count, scalars[index] != quote {
+                        value.unicodeScalars.append(scalars[index])
+                        index += 1
+                    }
+                    index += 1
+                } else {
+                    while index < scalars.count, !CharacterSet.whitespacesAndNewlines.contains(scalars[index]) {
+                        value.unicodeScalars.append(scalars[index])
+                        index += 1
+                    }
+                }
+            }
+            attributes[key.lowercased()] = decodeEntities(value)
+        }
+        return (name.lowercased(), attributes)
+    }
+
+    /// Index of the `>` that ends a tag starting at `start`, skipping quoted
+    /// attribute values (which may contain `>`).
+    private static func findTagEnd(_ scalars: [Unicode.Scalar], from start: Int) -> Int? {
+        var index = start
+        var quote: Unicode.Scalar?
+        while index < scalars.count {
+            let scalar = scalars[index]
+            if let open = quote {
+                if scalar == open { quote = nil }
+            } else if scalar == "\"" || scalar == "'" {
+                quote = scalar
+            } else if scalar == ">" {
+                return index
+            } else if scalar == "<" {
+                return nil
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    private static func hasPrefix(_ scalars: [Unicode.Scalar], at index: Int, _ prefix: String) -> Bool {
+        let prefixScalars = Array(prefix.unicodeScalars)
+        guard index + prefixScalars.count <= scalars.count else { return false }
+        return Array(scalars[index..<(index + prefixScalars.count)]) == prefixScalars
+    }
+
+    private static func find(_ scalars: [Unicode.Scalar], _ needle: String, from start: Int) -> Int? {
+        let needleScalars = Array(needle.unicodeScalars)
+        guard !needleScalars.isEmpty, start <= scalars.count - needleScalars.count else { return nil }
+        var index = start
+        while index <= scalars.count - needleScalars.count {
+            if scalars[index] == needleScalars[0],
+               Array(scalars[index..<(index + needleScalars.count)]) == needleScalars {
+                return index
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    private static func findCaseInsensitive(_ scalars: [Unicode.Scalar], _ needle: String, from start: Int) -> Int? {
+        let needleScalars = Array(needle.lowercased().unicodeScalars)
+        guard !needleScalars.isEmpty, start <= scalars.count - needleScalars.count else { return nil }
+        var index = start
+        while index <= scalars.count - needleScalars.count {
+            var matches = true
+            for offset in 0..<needleScalars.count {
+                let scalar = scalars[index + offset]
+                let lowered = scalar.properties.lowercaseMapping.unicodeScalars.first ?? scalar
+                if lowered != needleScalars[offset] {
+                    matches = false
+                    break
+                }
+            }
+            if matches { return index }
+            index += 1
+        }
+        return nil
+    }
+
+    private static let namedEntities: [String: String] = [
+        "amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'", "nbsp": "\u{00A0}",
+        "ndash": "\u{2013}", "mdash": "\u{2014}", "hellip": "\u{2026}", "bull": "\u{2022}",
+        "lsquo": "\u{2018}", "rsquo": "\u{2019}", "ldquo": "\u{201C}", "rdquo": "\u{201D}",
+        "laquo": "\u{00AB}", "raquo": "\u{00BB}", "copy": "\u{00A9}", "reg": "\u{00AE}",
+        "trade": "\u{2122}", "euro": "\u{20AC}", "middot": "\u{00B7}", "times": "\u{00D7}",
+        "rarr": "\u{2192}", "larr": "\u{2190}", "zwj": "\u{200D}", "zwnj": "\u{200C}",
+        "shy": "\u{00AD}", "deg": "\u{00B0}", "plusmn": "\u{00B1}", "sect": "\u{00A7}"
+    ]
+
+    static func decodeEntities(_ text: String) -> String {
+        guard text.contains("&") else { return text }
+        var output = ""
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            guard character == "&",
+                  let semicolon = text[index...].prefix(12).firstIndex(of: ";") else {
+                output.append(character)
+                index = text.index(after: index)
+                continue
+            }
+
+            let name = String(text[text.index(after: index)..<semicolon])
+            var decoded: String?
+            if name.hasPrefix("#x") || name.hasPrefix("#X") {
+                decoded = UInt32(name.dropFirst(2), radix: 16).flatMap(Unicode.Scalar.init).map { String(Character($0)) }
+            } else if name.hasPrefix("#") {
+                decoded = UInt32(name.dropFirst()).flatMap(Unicode.Scalar.init).map { String(Character($0)) }
+            } else {
+                decoded = namedEntities[name]
+            }
+            if let decoded {
+                output += decoded
+                index = text.index(after: semicolon)
+            } else {
+                output.append(character)
+                index = text.index(after: index)
+            }
+        }
+        return output
     }
 }

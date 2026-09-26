@@ -32,7 +32,7 @@ struct SettingsView: View {
     private let settingsControlColumnWidth: CGFloat = 240
     private let customActionModelPickerWidth: CGFloat = 220
     private let autoTranslateLanguages = TranslationService.supportedLanguages
-    
+
     var body: some View {
         VStack(spacing: 16) {
             Text("Settings")
@@ -311,6 +311,7 @@ struct SettingsView: View {
                     keyValidationRequestTasks[provider] = nil
                 }
             }
+
             let result = await translationService.validateAPIKeyOnly(candidate, for: provider)
             guard !Task.isCancelled else { return }
             let current = provider == .openAI ? openAIKey : geminiKey
