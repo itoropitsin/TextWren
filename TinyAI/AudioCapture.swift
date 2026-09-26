@@ -147,6 +147,14 @@ nonisolated final class AudioCapture: @unchecked Sendable {
         return Double(recorded.count) / sampleRate
     }
 
+    /// Set the engine up ahead of time so the first recording starts
+    /// without the audio unit's cold-start delay.
+    func prewarm() {
+        guard !isRunning else { return }
+        _ = engine.inputNode.outputFormat(forBus: 0)
+        engine.prepare()
+    }
+
     /// Start capture.  `voiceProcessing` enables Apple's echo cancellation,
     /// which keeps the live session from hearing its own voice.
     func start(voiceProcessing: Bool = false, onSamples: @escaping SampleHandler) throws {

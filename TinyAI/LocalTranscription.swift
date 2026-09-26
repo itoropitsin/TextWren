@@ -188,7 +188,10 @@ nonisolated final class LocalTranscriptionEngine: @unchecked Sendable {
     /// Load the model in the background so it is ready when recording stops.
     func preload(_ localModel: LocalTranscriptionModel) {
         let path = LocalModelManager.fileURL(for: localModel).path
-        queue.async { try? self.ensureLoaded(path: path) }
+        queue.async {
+            guard (try? self.ensureLoaded(path: path)) != nil, !self.streamActive else { return }
+            self.scheduleIdleUnload()
+        }
     }
 
     func unload() {

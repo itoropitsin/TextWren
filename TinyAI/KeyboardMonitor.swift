@@ -338,6 +338,7 @@ class KeyboardMonitor: ObservableObject {
 
     /// Replace the voice shortcuts the event tap listens for.
     func setVoiceHotkeys(_ registrations: [VoiceHotkeyRegistration]) {
+        logger.notice("Event tap active: \(self.eventTap != nil, privacy: .public), monitoring: \(self.globalMonitoringEnabled, privacy: .public)")
         tapState.update { state in
             state.voiceHotkeys = registrations
             if let held = state.heldVoiceHotkeyId, !registrations.contains(where: { $0.id == held }) {

@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import os
 
 /// Decides when a voice hotkey starts and stops recording.  `holdOrToggle`
 /// follows Handy: holding the key past the threshold records until release,
@@ -152,6 +153,7 @@ final class VoiceCoordinator: ObservableObject {
     private var errorResetWork: DispatchWorkItem?
     private var liveSession: LiveAgentSession?
     private var cancellables: Set<AnyCancellable> = []
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TinyAI", category: "Voice")
 
     init(store: VoiceSettingsStore, modelManager: LocalModelManager) {
         self.store = store
@@ -162,6 +164,29 @@ final class VoiceCoordinator: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.applyHotkeys() }
             .store(in: &cancellables)
+        prewarmMicrophone()
+    }
+
+    /// Reused capture per sample rate: a fresh audio engine takes close to a
+    /// second to start, which would cut off the first words.
+    private var captures: [Double: AudioCapture] = [:]
+
+    private func capture(sampleRate: Double) -> AudioCapture {
+        if let existing = captures[sampleRate] { return existing }
+        let created = AudioCapture(sampleRate: sampleRate)
+        captures[sampleRate] = created
+        return created
+    }
+
+    func prewarmMicrophone() {
+        guard MicrophonePermission.isGranted, !TinyAIRuntime.isTestEnvironment else { return }
+        let rate: Double = store.transcription.engine == .openAI
+            && OpenAITranscriptionModel.resolve(store.transcription.openAIModel).mode == .realtime
+            ? Double(OpenAIRealtimeTranscriber.sampleRate) : 16_000
+        capture(sampleRate: rate).prewarm()
+        if store.transcription.engine == .local, LocalModelManager.isDownloaded(store.transcription.localModel) {
+            LocalTranscriptionEngine.shared.preload(store.transcription.localModel)
+        }
     }
 
     // MARK: Hotkeys
@@ -180,10 +205,12 @@ final class VoiceCoordinator: ObservableObject {
         if let hotkey = store.live.hotkey {
             registrations.append(VoiceHotkeyRegistration(id: VoiceTrigger.liveHotkeyId, shortcut: hotkey.shortcut))
         }
+        logger.notice("Voice hotkeys: \(registrations.map { "\($0.id)=\($0.shortcut.displayString)" }.joined(separator: ", "), privacy: .public)")
         keyboardMonitor.setVoiceHotkeys(registrations)
     }
 
     func handleHotkey(id: String, edge: VoiceHotkeyEdge) {
+        logger.notice("Hotkey \(id, privacy: .public) \(edge == .down ? "down" : "up", privacy: .public) in state \(String(describing: self.state), privacy: .public)")
         if id == VoiceTrigger.liveHotkeyId {
             if edge == .down { toggleLive() }
             return
@@ -226,7 +253,13 @@ final class VoiceCoordinator: ObservableObject {
         guard MicrophonePermission.isGranted else {
             if MicrophonePermission.isUndetermined {
                 MicrophonePermission.request { [weak self] granted in
-                    if !granted { self?.fail(AudioCaptureError.microphoneDenied) }
+                    guard let self else { return }
+                    if granted {
+                        self.prewarmMicrophone()
+                        self.fail(VoiceServiceError.invalidResponse("Microphone access granted. Press the shortcut again to record."))
+                    } else {
+                        self.fail(AudioCaptureError.microphoneDenied)
+                    }
                 }
             } else {
                 fail(AudioCaptureError.microphoneDenied)
@@ -239,7 +272,6 @@ final class VoiceCoordinator: ObservableObject {
         var interpreter = HotkeyPressInterpreter(mode: mode ?? hotkey(for: trigger)?.mode ?? .holdOrToggle)
         _ = interpreter.keyDown()
         self.interpreter = interpreter
-        insertionTarget = AccessibilityElements.focusedReplacementTarget()
         partialTranscript = ""
 
         let sampleRate: Double
@@ -280,7 +312,7 @@ final class VoiceCoordinator: ObservableObject {
             }
         }
 
-        let capture = AudioCapture(sampleRate: sampleRate)
+        let capture = self.capture(sampleRate: sampleRate)
         do {
             try capture.start(onSamples: feed)
         } catch {
@@ -289,8 +321,12 @@ final class VoiceCoordinator: ObservableObject {
             return
         }
         self.capture = capture
+        // Asked only after the microphone runs: Accessibility calls to a busy
+        // app can take up to half a second and would cut off the first words.
+        insertionTarget = Self.pasteTarget()
         keyboardMonitor?.setVoiceSessionActive(true)
         state = .recording(trigger)
+        logger.notice("Recording started at \(Int(sampleRate)) Hz")
         playSound("Tink")
         levelTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
             guard let self, let capture = self.capture else { return }
@@ -318,6 +354,7 @@ final class VoiceCoordinator: ObservableObject {
         }
 
         state = .transcribing
+        logger.notice("Transcribing \(samples.count) samples")
         let settings = store.transcription
         let localRecording = self.localRecording
         let realtime = self.realtime
@@ -341,6 +378,7 @@ final class VoiceCoordinator: ObservableObject {
                 let transcript = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !transcript.isEmpty else { throw VoiceServiceError.emptyTranscript }
                 self.lastTranscript = transcript
+                self.logger.notice("Transcript: \(transcript.count) characters")
                 self.partialTranscript = ""
                 self.localRecording = nil
                 self.realtime = nil
@@ -358,6 +396,17 @@ final class VoiceCoordinator: ObservableObject {
                 self.fail(error)
             }
         }
+    }
+
+    /// The focused control, when it belongs to the frontmost app. Some apps
+    /// report an element owned by a helper process; pasting then goes to the
+    /// frontmost app instead of being refused.
+    static func pasteTarget() -> TextReplacementTarget? {
+        guard let target = AccessibilityElements.focusedReplacementTarget(),
+              target.processIdentifier == NSWorkspace.shared.frontmostApplication?.processIdentifier else {
+            return nil
+        }
+        return target
     }
 
     private func insertDictation(_ text: String, restoreClipboard: Bool) {
@@ -582,6 +631,7 @@ final class VoiceCoordinator: ObservableObject {
     }
 
     private func fail(_ error: Error) {
+        logger.error("Voice failed: \(error.localizedDescription, privacy: .public)")
         cleanUpRecording()
         workTask = nil
         isSpeakingResponse = false
