@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import AppKit
 @testable import TinyAI
 
 @MainActor
@@ -716,5 +717,18 @@ struct LocalEngineTests {
     @Test(.enabled(if: LocalModelManager.isDownloaded(.canary180MFlash)))
     func downloadedFileMatchesPinnedHash() {
         #expect(LocalModelManager.sha256(of: LocalModelManager.fileURL(for: .canary180MFlash)) == LocalTranscriptionModel.canary180MFlash.sha256)
+    }
+}
+
+@MainActor
+struct StatusHUDTests {
+    @Test func popupSitsUnderTheIconAndStaysOnScreen() {
+        let screen = NSScreen.main!.visibleFrame
+        let icon = NSRect(x: screen.midX, y: screen.maxY, width: 24, height: 24)
+        let origin = StatusHUDController.origin(for: NSSize(width: 340, height: 80), below: icon)
+        #expect(abs(origin.x + 170 - icon.midX) < 1)
+        #expect(origin.y + 80 <= screen.maxY)
+        let edge = NSRect(x: screen.maxX - 10, y: screen.maxY, width: 24, height: 24)
+        #expect(StatusHUDController.origin(for: NSSize(width: 340, height: 80), below: edge).x + 340 <= screen.maxX)
     }
 }

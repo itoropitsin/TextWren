@@ -42,6 +42,7 @@
 		7A1C20012F9E0000004A2529 /* TranscribeCpp.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A1C20002F9E0000004A2529 /* TranscribeCpp.xcframework */; };
 		7A1C20022F9E0000004A2529 /* TranscribeCpp.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 7A1C20002F9E0000004A2529 /* TranscribeCpp.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		7A1C30012F9E0000004A2529 /* VoiceFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C30002F9E0000004A2529 /* VoiceFeatureTests.swift */; };
+		7A1C40012F9E0000004A2529 /* StatusHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C40002F9E0000004A2529 /* StatusHUD.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -115,6 +116,7 @@
 		7A1C00162F9E0000004A2529 /* VoiceSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSettingsView.swift; sourceTree = "<group>"; };
 		7A1C20002F9E0000004A2529 /* TranscribeCpp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = TranscribeCpp.xcframework; path = Vendor/TranscribeCpp.xcframework; sourceTree = SOURCE_ROOT; };
 		7A1C30002F9E0000004A2529 /* VoiceFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceFeatureTests.swift; sourceTree = "<group>"; };
+		7A1C40002F9E0000004A2529 /* StatusHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusHUD.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -181,6 +183,7 @@
 				2C2167342EEC73E1004A2529 /* TranslationPopupView.swift */,
 				2C2167352EEC73E1004A2529 /* TranslationService.swift */,
 				2C2167512EEC73E1004A2529 /* DraggableWindow.swift */,
+				7A1C40002F9E0000004A2529 /* StatusHUD.swift */,
 				7A1C00002F9E0000004A2529 /* VoiceSettings.swift */,
 				7A1C00012F9E0000004A2529 /* VoiceSettingsStore.swift */,
 				7A1C00022F9E0000004A2529 /* AudioCapture.swift */,
@@ -393,6 +396,7 @@
 				E9DD64F3420B4975E1756459 /* HelpView.swift in Sources */,
 				2C21674A2EEC73E1004A2529 /* TranslationService.swift in Sources */,
 				2C2167732F0A1234004A2529 /* KeychainStore.swift in Sources */,
+				7A1C40012F9E0000004A2529 /* StatusHUD.swift in Sources */,
 				7A1C10002F9E0000004A2529 /* VoiceSettings.swift in Sources */,
 				7A1C10012F9E0000004A2529 /* VoiceSettingsStore.swift in Sources */,
 				7A1C10022F9E0000004A2529 /* AudioCapture.swift in Sources */,
@@ -595,7 +599,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 91;
+				CURRENT_PROJECT_VERSION = 92;
 				DEVELOPMENT_TEAM = Y29LYS5D8M;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -609,7 +613,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.75;
+				MARKETING_VERSION = 1.76;
 				PRODUCT_BUNDLE_IDENTIFIER = IT.TinyAI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -630,7 +634,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 91;
+				CURRENT_PROJECT_VERSION = 92;
 				DEVELOPMENT_TEAM = Y29LYS5D8M;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -644,7 +648,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.75;
+				MARKETING_VERSION = 1.76;
 				PRODUCT_BUNDLE_IDENTIFIER = IT.TinyAI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -665,7 +669,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 91;
+				CURRENT_PROJECT_VERSION = 92;
 				DEVELOPMENT_TEAM = Y29LYS5D8M;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -677,7 +681,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.75;
+				MARKETING_VERSION = 1.76;
 				PRODUCT_BUNDLE_IDENTIFIER = IT.TinyAI.UITesting;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;

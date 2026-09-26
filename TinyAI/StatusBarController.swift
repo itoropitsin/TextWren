@@ -11,6 +11,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var cancellables: Set<AnyCancellable> = []
     private var pulseTimer: Timer?
     private var pulseOn = false
+    private var hud: StatusHUDController?
 
     init(coordinator: VoiceCoordinator, openMainWindow: @escaping () -> Void, openSettings: @escaping () -> Void) {
         self.coordinator = coordinator
@@ -22,6 +23,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
         statusItem.button?.imageScaling = .scaleProportionallyDown
+
+        hud = StatusHUDController(coordinator: coordinator) { [weak self] in
+            self?.statusItem.button?.window?.frame
+        }
 
         coordinator.$state
             .receive(on: DispatchQueue.main)
@@ -75,8 +80,21 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func render(_ state: VoiceState) {
         guard let button = statusItem.button else { return }
         let symbol = Self.symbolName(for: state)
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: Self.statusText(for: state))
-        image?.isTemplate = true
+        var image = NSImage(systemSymbolName: symbol, accessibilityDescription: Self.statusText(for: state))
+        let tint: NSColor?
+        switch state {
+        case .recording: tint = .systemRed
+        case .error: tint = .systemOrange
+        default: tint = nil
+        }
+        if let tint {
+            // A coloured image, not a tinted template: menu bar templates are
+            // drawn monochrome in some appearances.
+            image = image?.withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [tint]))
+            image?.isTemplate = false
+        } else {
+            image?.isTemplate = true
+        }
         button.image = image
         button.toolTip = "TinyAI — \(Self.statusText(for: state))"
 
@@ -92,13 +110,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             pulseTimer?.invalidate()
             pulseTimer = nil
             button.alphaValue = 1
-        }
-        if case .error = state {
-            button.contentTintColor = .systemOrange
-        } else if case .recording = state {
-            button.contentTintColor = .systemRed
-        } else {
-            button.contentTintColor = nil
         }
     }
 
@@ -118,6 +129,18 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             let item = NSMenuItem(title: "“\(Self.truncated(preview, 60))”", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
+        }
+        if !coordinator.recentTranscripts.isEmpty {
+            let recent = NSMenuItem(title: "Recent Transcripts", action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            for text in coordinator.recentTranscripts {
+                let item = actionItem(Self.truncated(text, 60), #selector(copyRecent(_:)))
+                item.representedObject = text
+                item.toolTip = "Copy to clipboard"
+                submenu.addItem(item)
+            }
+            recent.submenu = submenu
+            menu.addItem(recent)
         }
         if coordinator.response != nil {
             menu.addItem(actionItem("Show Last Answer", #selector(showAnswer)))
@@ -197,6 +220,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func toggleAgent(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID else { return }
         coordinator.toggleFromMenu(.agent(id))
+    }
+
+    @objc private func copyRecent(_ sender: NSMenuItem) {
+        guard let text = sender.representedObject as? String else { return }
+        TextInserter.copy(text)
     }
 
     @objc private func toggleLive() { coordinator.toggleLive() }

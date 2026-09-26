@@ -124,6 +124,13 @@ final class VoiceCoordinator: ObservableObject {
     @Published private(set) var response: AgentResponseContent?
     @Published private(set) var liveTurns: [LiveAgentSession.Turn] = []
     @Published private(set) var isSpeakingResponse = false
+    /// A transcript shown in the menu bar popup because no text field had
+    /// focus (or pasting failed).
+    @Published private(set) var unplacedTranscript: String?
+    /// The five latest transcripts, newest first.
+    @Published private(set) var recentTranscripts: [String] = []
+    static let recentTranscriptsKey = "RecentTranscriptsV1"
+    static let recentTranscriptsLimit = 5
 
     let store: VoiceSettingsStore
     let modelManager: LocalModelManager
@@ -148,6 +155,7 @@ final class VoiceCoordinator: ObservableObject {
     private var localRecording: LocalTranscriptionRecording?
     private var realtime: OpenAIRealtimeTranscriber?
     private var insertionTarget: TextReplacementTarget?
+    private var focusIsTextField = true
     private var workTask: Task<Void, Never>?
     private var levelTimer: Timer?
     private var errorResetWork: DispatchWorkItem?
@@ -164,7 +172,19 @@ final class VoiceCoordinator: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.applyHotkeys() }
             .store(in: &cancellables)
+        recentTranscripts = TinyAIRuntime.userDefaults.stringArray(forKey: Self.recentTranscriptsKey) ?? []
         prewarmMicrophone()
+    }
+
+    private func remember(_ transcript: String) {
+        var recent = recentTranscripts.filter { $0 != transcript }
+        recent.insert(transcript, at: 0)
+        recentTranscripts = Array(recent.prefix(Self.recentTranscriptsLimit))
+        TinyAIRuntime.userDefaults.set(recentTranscripts, forKey: Self.recentTranscriptsKey)
+    }
+
+    func dismissUnplacedTranscript() {
+        unplacedTranscript = nil
     }
 
     /// Reused capture per sample rate: a fresh audio engine takes close to a
@@ -323,7 +343,10 @@ final class VoiceCoordinator: ObservableObject {
         self.capture = capture
         // Asked only after the microphone runs: Accessibility calls to a busy
         // app can take up to half a second and would cut off the first words.
-        insertionTarget = Self.pasteTarget()
+        let focus = Self.focusedTarget()
+        insertionTarget = focus.target
+        focusIsTextField = focus.isTextField
+        unplacedTranscript = nil
         keyboardMonitor?.setVoiceSessionActive(true)
         state = .recording(trigger)
         logger.notice("Recording started at \(Int(sampleRate)) Hz")
@@ -378,6 +401,7 @@ final class VoiceCoordinator: ObservableObject {
                 let transcript = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !transcript.isEmpty else { throw VoiceServiceError.emptyTranscript }
                 self.lastTranscript = transcript
+                self.remember(transcript)
                 self.logger.notice("Transcript: \(transcript.count) characters")
                 self.partialTranscript = ""
                 self.localRecording = nil
@@ -401,15 +425,23 @@ final class VoiceCoordinator: ObservableObject {
     /// The focused control, when it belongs to the frontmost app. Some apps
     /// report an element owned by a helper process; pasting then goes to the
     /// frontmost app instead of being refused.
-    static func pasteTarget() -> TextReplacementTarget? {
-        guard let target = AccessibilityElements.focusedReplacementTarget(),
+    static func focusedTarget() -> (target: TextReplacementTarget?, isTextField: Bool) {
+        guard let element = AccessibilityElements.focusedElement() else { return (nil, true) }
+        let isTextField = AccessibilityElements.isEditableText(element)
+        guard let target = AccessibilityElements.replacementTarget(for: element),
               target.processIdentifier == NSWorkspace.shared.frontmostApplication?.processIdentifier else {
-            return nil
+            return (nil, isTextField)
         }
-        return target
+        return (target, isTextField)
     }
 
     private func insertDictation(_ text: String, restoreClipboard: Bool) {
+        guard focusIsTextField else {
+            // Nothing to type into: show the text in the menu bar popup.
+            unplacedTranscript = text
+            finishSession()
+            return
+        }
         let payload = RichTextPayload(plain: text, html: nil, rtf: nil)
         TextInserter.insert(payload, into: insertionTarget, restoreClipboard: restoreClipboard) { [weak self] result in
             guard let self else { return }
@@ -417,9 +449,9 @@ final class VoiceCoordinator: ObservableObject {
             case .success:
                 self.finishSession()
             case .failure:
-                // The target lost focus; keep the text on the clipboard.
-                TextInserter.copy(text)
-                self.fail(VoiceServiceError.invalidResponse("The text field lost focus. The transcript is on the clipboard."))
+                // The text field lost focus: show the text instead.
+                self.unplacedTranscript = text
+                self.finishSession()
             }
         }
     }

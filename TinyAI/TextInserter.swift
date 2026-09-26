@@ -87,6 +87,31 @@ extension AccessibilityElements {
         return TextReplacementTarget(element: element, processIdentifier: processIdentifier)
     }
 
+    /// Whether the element accepts typed text.  Unknown answers count as
+    /// editable so a paste is never skipped just because an app exposes
+    /// little Accessibility information.
+    static func isEditableText(_ element: AXUIElement) -> Bool {
+        var roleValue: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue) == .success,
+              let role = roleValue as? String else {
+            return true
+        }
+        let textRoles: Set<String> = [kAXTextFieldRole as String, kAXTextAreaRole as String,
+                                      kAXComboBoxRole as String, "AXSearchField"]
+        if textRoles.contains(role) { return true }
+        var editable: AnyObject?
+        if AXUIElementCopyAttributeValue(element, "AXEditable" as CFString, &editable) == .success,
+           (editable as? Bool) == true {
+            return true
+        }
+        var settable = DarwinBoolean(false)
+        if AXUIElementIsAttributeSettable(element, kAXSelectedTextRangeAttribute as CFString, &settable) == .success,
+           settable.boolValue {
+            return true
+        }
+        return false
+    }
+
     static func focusedReplacementTarget() -> TextReplacementTarget? {
         guard let element = focusedElement() else { return nil }
         return replacementTarget(for: element)
