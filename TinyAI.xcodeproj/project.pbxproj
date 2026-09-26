@@ -22,6 +22,26 @@
 		A1B2C3D4E5F60718293A4B5C /* TinyAITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C2167382EEC73E1004A2529 /* TinyAITests.swift */; };
 		A1B2C3D4E5F60718293A4B5D /* TinyAIUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C21673A2EEC73E1004A2529 /* TinyAIUITests.swift */; };
 		A1B2C3D4E5F60718293A4B5E /* TinyAIUITestsLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C21673B2EEC73E1004A2529 /* TinyAIUITestsLaunchTests.swift */; };
+		7A1C10002F9E0000004A2529 /* VoiceSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00002F9E0000004A2529 /* VoiceSettings.swift */; };
+		7A1C10012F9E0000004A2529 /* VoiceSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00012F9E0000004A2529 /* VoiceSettingsStore.swift */; };
+		7A1C10022F9E0000004A2529 /* AudioCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00022F9E0000004A2529 /* AudioCapture.swift */; };
+		7A1C10032F9E0000004A2529 /* TextInserter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00032F9E0000004A2529 /* TextInserter.swift */; };
+		7A1C10042F9E0000004A2529 /* OpenAITranscriptionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00042F9E0000004A2529 /* OpenAITranscriptionClient.swift */; };
+		7A1C10052F9E0000004A2529 /* LocalTranscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00052F9E0000004A2529 /* LocalTranscription.swift */; };
+		7A1C10062F9E0000004A2529 /* HTTPAgentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00062F9E0000004A2529 /* HTTPAgentClient.swift */; };
+		7A1C10072F9E0000004A2529 /* MCPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00072F9E0000004A2529 /* MCPClient.swift */; };
+		7A1C10082F9E0000004A2529 /* OAuthBrowserAuthorizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00082F9E0000004A2529 /* OAuthBrowserAuthorizer.swift */; };
+		7A1C10092F9E0000004A2529 /* SpeechPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00092F9E0000004A2529 /* SpeechPlayer.swift */; };
+		7A1C10102F9E0000004A2529 /* AgentDispatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00102F9E0000004A2529 /* AgentDispatcher.swift */; };
+		7A1C10112F9E0000004A2529 /* LiveProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00112F9E0000004A2529 /* LiveProtocol.swift */; };
+		7A1C10122F9E0000004A2529 /* LiveAgentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00122F9E0000004A2529 /* LiveAgentSession.swift */; };
+		7A1C10132F9E0000004A2529 /* VoiceCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00132F9E0000004A2529 /* VoiceCoordinator.swift */; };
+		7A1C10142F9E0000004A2529 /* StatusBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00142F9E0000004A2529 /* StatusBarController.swift */; };
+		7A1C10152F9E0000004A2529 /* AgentResponsePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00152F9E0000004A2529 /* AgentResponsePanel.swift */; };
+		7A1C10162F9E0000004A2529 /* VoiceSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C00162F9E0000004A2529 /* VoiceSettingsView.swift */; };
+		7A1C20012F9E0000004A2529 /* TranscribeCpp.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A1C20002F9E0000004A2529 /* TranscribeCpp.xcframework */; };
+		7A1C20022F9E0000004A2529 /* TranscribeCpp.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 7A1C20002F9E0000004A2529 /* TranscribeCpp.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		7A1C30012F9E0000004A2529 /* VoiceFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C30002F9E0000004A2529 /* VoiceFeatureTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -40,6 +60,20 @@
 			remoteInfo = TinyAI;
 		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		7A1C20032F9E0000004A2529 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				7A1C20022F9E0000004A2529 /* TranscribeCpp.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		2C2166F42EEC7398004A2529 /* TinyAI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TinyAI.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -62,6 +96,25 @@
 		2C2167722F0A1234004A2529 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		2C2167812F123456004A2529 /* MarkdownTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTextView.swift; sourceTree = "<group>"; };
 		D9B71849304D48C2CCAC60D0 /* HelpView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpView.swift; sourceTree = "<group>"; };
+		7A1C00002F9E0000004A2529 /* VoiceSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSettings.swift; sourceTree = "<group>"; };
+		7A1C00012F9E0000004A2529 /* VoiceSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSettingsStore.swift; sourceTree = "<group>"; };
+		7A1C00022F9E0000004A2529 /* AudioCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCapture.swift; sourceTree = "<group>"; };
+		7A1C00032F9E0000004A2529 /* TextInserter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextInserter.swift; sourceTree = "<group>"; };
+		7A1C00042F9E0000004A2529 /* OpenAITranscriptionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAITranscriptionClient.swift; sourceTree = "<group>"; };
+		7A1C00052F9E0000004A2529 /* LocalTranscription.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalTranscription.swift; sourceTree = "<group>"; };
+		7A1C00062F9E0000004A2529 /* HTTPAgentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPAgentClient.swift; sourceTree = "<group>"; };
+		7A1C00072F9E0000004A2529 /* MCPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPClient.swift; sourceTree = "<group>"; };
+		7A1C00082F9E0000004A2529 /* OAuthBrowserAuthorizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthBrowserAuthorizer.swift; sourceTree = "<group>"; };
+		7A1C00092F9E0000004A2529 /* SpeechPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechPlayer.swift; sourceTree = "<group>"; };
+		7A1C00102F9E0000004A2529 /* AgentDispatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDispatcher.swift; sourceTree = "<group>"; };
+		7A1C00112F9E0000004A2529 /* LiveProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveProtocol.swift; sourceTree = "<group>"; };
+		7A1C00122F9E0000004A2529 /* LiveAgentSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveAgentSession.swift; sourceTree = "<group>"; };
+		7A1C00132F9E0000004A2529 /* VoiceCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCoordinator.swift; sourceTree = "<group>"; };
+		7A1C00142F9E0000004A2529 /* StatusBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarController.swift; sourceTree = "<group>"; };
+		7A1C00152F9E0000004A2529 /* AgentResponsePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentResponsePanel.swift; sourceTree = "<group>"; };
+		7A1C00162F9E0000004A2529 /* VoiceSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSettingsView.swift; sourceTree = "<group>"; };
+		7A1C20002F9E0000004A2529 /* TranscribeCpp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = TranscribeCpp.xcframework; path = Vendor/TranscribeCpp.xcframework; sourceTree = SOURCE_ROOT; };
+		7A1C30002F9E0000004A2529 /* VoiceFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceFeatureTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -69,6 +122,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7A1C20012F9E0000004A2529 /* TranscribeCpp.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -96,6 +150,7 @@
 				2C2167392EEC73E1004A2529 /* TinyAITests */,
 				2C21673C2EEC73E1004A2529 /* TinyAIUITests */,
 				2C2166F52EEC7398004A2529 /* Products */,
+				7A1C20052F9E0000004A2529 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -126,6 +181,23 @@
 				2C2167342EEC73E1004A2529 /* TranslationPopupView.swift */,
 				2C2167352EEC73E1004A2529 /* TranslationService.swift */,
 				2C2167512EEC73E1004A2529 /* DraggableWindow.swift */,
+				7A1C00002F9E0000004A2529 /* VoiceSettings.swift */,
+				7A1C00012F9E0000004A2529 /* VoiceSettingsStore.swift */,
+				7A1C00022F9E0000004A2529 /* AudioCapture.swift */,
+				7A1C00032F9E0000004A2529 /* TextInserter.swift */,
+				7A1C00042F9E0000004A2529 /* OpenAITranscriptionClient.swift */,
+				7A1C00052F9E0000004A2529 /* LocalTranscription.swift */,
+				7A1C00062F9E0000004A2529 /* HTTPAgentClient.swift */,
+				7A1C00072F9E0000004A2529 /* MCPClient.swift */,
+				7A1C00082F9E0000004A2529 /* OAuthBrowserAuthorizer.swift */,
+				7A1C00092F9E0000004A2529 /* SpeechPlayer.swift */,
+				7A1C00102F9E0000004A2529 /* AgentDispatcher.swift */,
+				7A1C00112F9E0000004A2529 /* LiveProtocol.swift */,
+				7A1C00122F9E0000004A2529 /* LiveAgentSession.swift */,
+				7A1C00132F9E0000004A2529 /* VoiceCoordinator.swift */,
+				7A1C00142F9E0000004A2529 /* StatusBarController.swift */,
+				7A1C00152F9E0000004A2529 /* AgentResponsePanel.swift */,
+				7A1C00162F9E0000004A2529 /* VoiceSettingsView.swift */,
 			);
 			path = TinyAI;
 			sourceTree = "<group>";
@@ -134,6 +206,7 @@
 			isa = PBXGroup;
 			children = (
 				2C2167382EEC73E1004A2529 /* TinyAITests.swift */,
+				7A1C30002F9E0000004A2529 /* VoiceFeatureTests.swift */,
 			);
 			path = TinyAITests;
 			sourceTree = "<group>";
@@ -147,6 +220,14 @@
 			path = TinyAIUITests;
 			sourceTree = "<group>";
 		};
+		7A1C20052F9E0000004A2529 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				7A1C20002F9E0000004A2529 /* TranscribeCpp.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -154,9 +235,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2C2167152EEC7399004A2529 /* Build configuration list for PBXNativeTarget "TinyAI" */;
 			buildPhases = (
+				7A1C20042F9E0000004A2529 /* Fetch transcribe.cpp */,
 				2C2166F02EEC7398004A2529 /* Sources */,
 				2C2166F12EEC7398004A2529 /* Frameworks */,
 				2C2166F22EEC7398004A2529 /* Resources */,
+				7A1C20032F9E0000004A2529 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -278,6 +361,24 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		7A1C20042F9E0000004A2529 /* Fetch transcribe.cpp */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Fetch transcribe.cpp";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/fetch_transcribe_cpp.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		2C2166F02EEC7398004A2529 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -292,6 +393,23 @@
 				E9DD64F3420B4975E1756459 /* HelpView.swift in Sources */,
 				2C21674A2EEC73E1004A2529 /* TranslationService.swift in Sources */,
 				2C2167732F0A1234004A2529 /* KeychainStore.swift in Sources */,
+				7A1C10002F9E0000004A2529 /* VoiceSettings.swift in Sources */,
+				7A1C10012F9E0000004A2529 /* VoiceSettingsStore.swift in Sources */,
+				7A1C10022F9E0000004A2529 /* AudioCapture.swift in Sources */,
+				7A1C10032F9E0000004A2529 /* TextInserter.swift in Sources */,
+				7A1C10042F9E0000004A2529 /* OpenAITranscriptionClient.swift in Sources */,
+				7A1C10052F9E0000004A2529 /* LocalTranscription.swift in Sources */,
+				7A1C10062F9E0000004A2529 /* HTTPAgentClient.swift in Sources */,
+				7A1C10072F9E0000004A2529 /* MCPClient.swift in Sources */,
+				7A1C10082F9E0000004A2529 /* OAuthBrowserAuthorizer.swift in Sources */,
+				7A1C10092F9E0000004A2529 /* SpeechPlayer.swift in Sources */,
+				7A1C10102F9E0000004A2529 /* AgentDispatcher.swift in Sources */,
+				7A1C10112F9E0000004A2529 /* LiveProtocol.swift in Sources */,
+				7A1C10122F9E0000004A2529 /* LiveAgentSession.swift in Sources */,
+				7A1C10132F9E0000004A2529 /* VoiceCoordinator.swift in Sources */,
+				7A1C10142F9E0000004A2529 /* StatusBarController.swift in Sources */,
+				7A1C10152F9E0000004A2529 /* AgentResponsePanel.swift in Sources */,
+				7A1C10162F9E0000004A2529 /* VoiceSettingsView.swift in Sources */,
 				2C2167602F0A0000004A2529 /* RichTextPayload.swift in Sources */,
 				2C2167522EEC73E1004A2529 /* DraggableWindow.swift in Sources */,
 			);
@@ -302,6 +420,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1B2C3D4E5F60718293A4B5C /* TinyAITests.swift in Sources */,
+				7A1C30012F9E0000004A2529 /* VoiceFeatureTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -473,9 +592,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = TinyAI/TinyAI.entitlements;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 82;
+				CURRENT_PROJECT_VERSION = 83;
 				DEVELOPMENT_TEAM = Y29LYS5D8M;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -489,7 +609,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.66;
+				MARKETING_VERSION = 1.67;
 				PRODUCT_BUNDLE_IDENTIFIER = IT.TinyAI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -507,9 +627,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = TinyAI/TinyAI.entitlements;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 82;
+				CURRENT_PROJECT_VERSION = 83;
 				DEVELOPMENT_TEAM = Y29LYS5D8M;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -523,7 +644,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.66;
+				MARKETING_VERSION = 1.67;
 				PRODUCT_BUNDLE_IDENTIFIER = IT.TinyAI;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -541,17 +662,22 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = TinyAI/TinyAI.entitlements;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 82;
+				CURRENT_PROJECT_VERSION = 83;
 				DEVELOPMENT_TEAM = Y29LYS5D8M;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = TinyAI/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MACOSX_DEPLOYMENT_TARGET = 14.6;
-				MARKETING_VERSION = 1.66;
+				MARKETING_VERSION = 1.67;
 				PRODUCT_BUNDLE_IDENTIFIER = IT.TinyAI.UITesting;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;

@@ -105,6 +105,17 @@ nonisolated struct KeyboardShortcut: Equatable, Sendable {
     }
 }
 
+/// A global voice shortcut the event tap reports on press and release.
+nonisolated struct VoiceHotkeyRegistration: Equatable, Sendable {
+    let id: String
+    let shortcut: KeyboardShortcut
+}
+
+nonisolated enum VoiceHotkeyEdge: Sendable {
+    case down
+    case up
+}
+
 /// State shared between the main thread and the event-tap thread.  The tap
 /// callback runs on its own thread so a busy main thread (Accessibility
 /// calls, HTML import, pasteboard snapshots) never delays keystrokes in
@@ -121,6 +132,13 @@ nonisolated private final class EventTapState: @unchecked Sendable {
         var isSimulatingCopy = false
         var lastPopupHotkeyPressTime: Date?
         var pendingDoublePressPasteboardChangeCount: Int?
+        var voiceHotkeys: [VoiceHotkeyRegistration] = []
+        /// The voice shortcut whose key is currently held down.  Its key-up
+        /// and auto-repeat events are swallowed so they never reach the
+        /// frontmost application.
+        var heldVoiceHotkeyId: String?
+        var heldVoiceKeyCode: Int64?
+        var voiceSessionActive = false
     }
 
     private let lock = NSLock()
@@ -197,6 +215,11 @@ enum AccessibilityElements {
 
 class KeyboardMonitor: ObservableObject {
     var onPopupHotkey: ((RichTextPayload) -> Void)?
+    /// Called on the main thread when a registered voice shortcut is pressed
+    /// or released.
+    var onVoiceHotkey: ((String, VoiceHotkeyEdge) -> Void)?
+    /// Called on the main thread when Esc is pressed during a voice session.
+    var onVoiceCancel: (() -> Void)?
     @Published var isCustomActionHotkeysEnabled: Bool = false {
         didSet { tapState.update { $0.isCustomActionHotkeysEnabled = isCustomActionHotkeysEnabled } }
     }
@@ -311,6 +334,60 @@ class KeyboardMonitor: ObservableObject {
     deinit {
         stopMonitoring()
         appActivationObservers.forEach(NotificationCenter.default.removeObserver)
+    }
+
+    /// Replace the voice shortcuts the event tap listens for.
+    func setVoiceHotkeys(_ registrations: [VoiceHotkeyRegistration]) {
+        tapState.update { state in
+            state.voiceHotkeys = registrations
+            if let held = state.heldVoiceHotkeyId, !registrations.contains(where: { $0.id == held }) {
+                state.heldVoiceHotkeyId = nil
+                state.heldVoiceKeyCode = nil
+            }
+        }
+    }
+
+    /// While a voice session runs, Esc cancels it instead of reaching the
+    /// frontmost application.
+    func setVoiceSessionActive(_ active: Bool) {
+        tapState.update { $0.voiceSessionActive = active }
+    }
+
+    static func voiceValidationError(
+        for shortcut: KeyboardShortcut,
+        popupHotkey: KeyboardShortcut,
+        otherVoiceHotkeys: [KeyboardShortcut]
+    ) -> String? {
+        let modifiers = shortcut.modifiers
+        if modifiers.intersection([.command, .option, .control]).isEmpty {
+            return "Voice shortcuts must include ⌘, ⌥ or ⌃."
+        }
+        if shortcut.keyCode == 53 {
+            return "Esc cancels voice sessions and can’t be a shortcut."
+        }
+        if shortcut == popupHotkey {
+            return "This shortcut already opens the TinyAI popup."
+        }
+        let reservedDigitKeyCodes: Set<Int64> = [18, 19, 20, 21, 22, 23, 25, 26, 28, 29]
+        if modifiers == [.command] && reservedDigitKeyCodes.contains(shortcut.keyCode) {
+            return "⌘1, ⌘2, ⌘3, … are static shortcuts and can’t be reassigned."
+        }
+        if modifiers == [.command] && (shortcut.keyCode == 49 || shortcut.keyCode == 48) {
+            return "⌘Space and ⌘Tab are reserved by the system."
+        }
+        if modifiers == [.control] && shortcut.keyCode == 49 {
+            return "⌃Space switches input sources in macOS."
+        }
+        if modifiers == [.command, .shift] && [20, 21, 23].contains(shortcut.keyCode) {
+            return "⌘⇧3/4/5 are reserved by the system for screenshots."
+        }
+        if modifiers == [.command] && [0, 6, 7, 8, 9, 1, 12, 13, 50].contains(shortcut.keyCode) {
+            return "This shortcut already has a system-defined action (Copy/Paste/Undo/etc)."
+        }
+        if otherVoiceHotkeys.contains(shortcut) {
+            return "Another voice action already uses this shortcut."
+        }
+        return nil
     }
 
     func validatePopupHotkey(_ shortcut: KeyboardShortcut, pressMode: PopupHotkeyPressMode) -> String? {
@@ -501,13 +578,36 @@ class KeyboardMonitor: ObservableObject {
             return Unmanaged.passUnretained(event)
         }
 
-        guard type == .keyDown, tapState.read(\.globalMonitoringEnabled) else {
+        guard tapState.read(\.globalMonitoringEnabled) else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        if type == .keyUp {
+            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            let releasedId: String? = tapState.update { state in
+                guard let id = state.heldVoiceHotkeyId, state.heldVoiceKeyCode == keyCode else { return nil }
+                state.heldVoiceHotkeyId = nil
+                state.heldVoiceKeyCode = nil
+                return id
+            }
+            guard let releasedId else { return Unmanaged.passUnretained(event) }
+            DispatchQueue.main.async { [weak self] in
+                self?.onVoiceHotkey?(releasedId, .up)
+            }
+            return nil
+        }
+
+        guard type == .keyDown else {
             return Unmanaged.passUnretained(event)
         }
 
         // A held key generates repeated keyDown events. They must not trigger a
         // second popup or custom action while the user is still holding the key.
         if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
+            let repeatedKeyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            if tapState.read(\.heldVoiceKeyCode) == repeatedKeyCode {
+                return nil
+            }
             return Unmanaged.passUnretained(event)
         }
 
@@ -522,11 +622,25 @@ class KeyboardMonitor: ObservableObject {
             case swallow
             case customAction(Int)
             case popup(previousPasteboardChangeCount: Int?, naturalCopyStartedAt: Date?)
+            case voice(String)
+            case voiceCancel
         }
 
         let decision: Decision = tapState.update { state in
             if state.isSimulatingCopy {
                 return .pass
+            }
+
+            if let registration = state.voiceHotkeys.first(where: {
+                $0.shortcut.keyCode == keyCode && $0.shortcut.modifiers == observedModifiers
+            }) {
+                state.heldVoiceHotkeyId = registration.id
+                state.heldVoiceKeyCode = keyCode
+                return .voice(registration.id)
+            }
+
+            if keyCode == 53 && observedModifiers.isEmpty && state.voiceSessionActive {
+                return .voiceCancel
             }
 
             if state.isCustomActionHotkeysEnabled && state.isAppActive && observedModifiers == [.command],
@@ -587,6 +701,16 @@ class KeyboardMonitor: ObservableObject {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
                 self?.isProcessingCustomAction = false
+            }
+            return nil
+        case .voice(let id):
+            DispatchQueue.main.async { [weak self] in
+                self?.onVoiceHotkey?(id, .down)
+            }
+            return nil
+        case .voiceCancel:
+            DispatchQueue.main.async { [weak self] in
+                self?.onVoiceCancel?()
             }
             return nil
         case .popup(let previousPasteboardChangeCount, let naturalCopyStartedAt):
@@ -833,117 +957,21 @@ class KeyboardMonitor: ObservableObject {
         }
     }
 
-    private enum PasteboardValue {
-        case data(Data)
-        case string(String)
-        case plist(Data)
-    }
-
-    private typealias PasteboardSnapshot = [[NSPasteboard.PasteboardType: PasteboardValue]]
-
     private func snapshotPasteboard(_ pasteboard: NSPasteboard) -> PasteboardSnapshot {
-        guard let items = pasteboard.pasteboardItems else {
-            return []
-        }
-
-        var snapshot: PasteboardSnapshot = []
-        snapshot.reserveCapacity(items.count)
-
-        for item in items {
-            var dict: [NSPasteboard.PasteboardType: PasteboardValue] = [:]
-            for type in item.types {
-                if let data = item.data(forType: type) {
-                    dict[type] = .data(data)
-                    continue
-                }
-                if let string = item.string(forType: type) {
-                    dict[type] = .string(string)
-                    continue
-                }
-                if let plist = item.propertyList(forType: type),
-                   let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0) {
-                    dict[type] = .plist(data)
-                    continue
-                }
-            }
-            snapshot.append(dict)
-        }
-
-        return snapshot
+        PasteboardSnapshot(pasteboard)
     }
 
     private func restorePasteboard(_ pasteboard: NSPasteboard, snapshot: PasteboardSnapshot) {
-        pasteboard.clearContents()
-        guard !snapshot.isEmpty else {
-            return
-        }
-
-        var items: [NSPasteboardItem] = []
-        items.reserveCapacity(snapshot.count)
-
-        for dict in snapshot {
-            let item = NSPasteboardItem()
-            for (type, value) in dict {
-                switch value {
-                case .data(let data):
-                    item.setData(data, forType: type)
-                case .string(let string):
-                    item.setString(string, forType: type)
-                case .plist(let data):
-                    if let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) {
-                        item.setPropertyList(plist, forType: type)
-                    }
-                }
-            }
-            items.append(item)
-        }
-
-        pasteboard.writeObjects(items)
+        snapshot.restore(to: pasteboard)
     }
 
     private func focusedTextReplacementTarget() -> TextReplacementTarget? {
-        guard let element = focusedUIElement() else { return nil }
-        return textReplacementTarget(for: element)
-    }
-
-    private func textReplacementTarget(for element: AXUIElement) -> TextReplacementTarget? {
-        var processIdentifier: pid_t = 0
-        AXUIElementGetPid(element, &processIdentifier)
-        guard processIdentifier != 0 else { return nil }
-        return TextReplacementTarget(element: element, processIdentifier: processIdentifier)
-    }
-
-    private func focusedUIElement() -> AXUIElement? {
-        let systemWideElement = AccessibilityElements.systemWide()
-
-        var focusedElementValue: AnyObject?
-        let focusedElementResult = AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElementValue)
-
-        let element: AXUIElement?
-        if focusedElementResult == .success, let focused = focusedElementValue as! AXUIElement? {
-            element = focused
-        } else {
-            var focusedApp: AnyObject?
-            let result = AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedApplicationAttribute as CFString, &focusedApp)
-            guard result == .success, let app = focusedApp as! AXUIElement? else {
-                return nil
-            }
-
-            var focusedWindow: AnyObject?
-            let windowResult = AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &focusedWindow)
-            guard windowResult == .success, let window = focusedWindow as! AXUIElement? else {
-                return nil
-            }
-
-            element = window
-        }
-
-        return element
+        AccessibilityElements.focusedReplacementTarget()
     }
 
     private func getSelectedRichText() -> RichTextPayload? {
-        guard let element = focusedUIElement() else { return nil }
-        let target = textReplacementTarget(for: element)
+        guard let element = AccessibilityElements.focusedElement() else { return nil }
+        let target = AccessibilityElements.replacementTarget(for: element)
 
         let attributedAttribute = "AXSelectedTextAttributedString" as CFString
         var attributedValue: AnyObject?

@@ -10,3 +10,6 @@
 # Local build and test output
 .build/
 *.trace
+
+# Downloaded by scripts/fetch_transcribe_cpp.sh
+Vendor/

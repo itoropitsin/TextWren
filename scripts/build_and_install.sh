@@ -4,8 +4,8 @@ set -euo pipefail
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
 build_root="$(mktemp -d /tmp/TinyAI-build.XXXXXX)"
 app_bundle="$build_root/TinyAI.app"
-version="1.66"
-build_number="82"
+version="1.67"
+build_number="83"
 project_file="$project_root/TinyAI.xcodeproj/project.pbxproj"
 sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
 build_only="${1:-}"
@@ -96,7 +96,13 @@ if [[ -n "$signing_identity" ]]; then
   fi
 fi
 
-mkdir -p "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources"
+mkdir -p "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources" "$app_bundle/Contents/Frameworks"
+
+# The local speech engine ships as a prebuilt framework; fetch the pinned
+# release once and embed it next to the executable.
+"$project_root/scripts/fetch_transcribe_cpp.sh"
+transcribe_framework_dir="$project_root/Vendor/TranscribeCpp.xcframework/macos-arm64_x86_64"
+ditto "$transcribe_framework_dir/CTranscribe.framework" "$app_bundle/Contents/Frameworks/CTranscribe.framework"
 
 echo "Собираю TinyAI $version ($build_number)…"
 swiftc \
@@ -112,6 +118,9 @@ swiftc \
   -O \
   -o "$app_bundle/Contents/MacOS/TinyAI" \
   "$project_root"/TinyAI/*.swift \
+  -F "$transcribe_framework_dir" \
+  -framework CTranscribe \
+  -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   -framework AppKit \
   -framework SwiftUI \
   -framework Combine \
@@ -121,7 +130,10 @@ swiftc \
   -framework QuartzCore \
   -framework Foundation \
   -framework LocalAuthentication \
-  -framework Security
+  -framework Security \
+  -framework AVFoundation \
+  -framework CryptoKit \
+  -framework Network
 
 iconset="$build_root/AppIcon.iconset"
 mkdir -p "$iconset"
@@ -142,6 +154,10 @@ printf 'APPL????' > "$app_bundle/Contents/PkgInfo"
 
 if [[ -n "$signing_identity" ]]; then
   echo "Подписываю сертификатом: $signing_identity"
+  # The embedded framework arrives ad-hoc signed; hardened runtime only
+  # loads libraries signed by the same team, so sign it first.
+  codesign --force --options runtime --sign "$signing_identity" \
+    "$app_bundle/Contents/Frameworks/CTranscribe.framework"
   codesign --force --deep --options runtime --sign "$signing_identity" \
     --entitlements "$project_root/TinyAI/TinyAI.entitlements" \
     "$app_bundle"
@@ -151,6 +167,7 @@ fi
 
 echo "Проверяю собранное приложение…"
 test -x "$app_bundle/Contents/MacOS/TinyAI"
+test -f "$app_bundle/Contents/Frameworks/CTranscribe.framework/Versions/A/CTranscribe"
 test -s "$app_bundle/Contents/Resources/AppIcon.icns"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_bundle/Contents/Info.plist")" = "$version"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_bundle/Contents/Info.plist")" = "$build_number"

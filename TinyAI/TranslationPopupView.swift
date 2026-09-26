@@ -796,49 +796,18 @@ struct TranslationPopupView: View {
     }
 
     private func replaceText(with payload: RichTextPayload) {
-        guard let target = selectedPayload?.replacementTarget,
-              let application = NSRunningApplication(processIdentifier: target.processIdentifier) else {
-            translationService.errorMessage = "The original text application is no longer available."
+        guard let target = selectedPayload?.replacementTarget else {
+            translationService.errorMessage = TextInserter.InsertError.targetUnavailable.errorDescription
             return
         }
 
-        let pasteboard = NSPasteboard.general
-        var replacementPayload = payload
-        replacementPayload.replacementTarget = target
-        RichTextPasteboard.write(replacementPayload, to: pasteboard)
-        let expectedPasteboardChangeCount = pasteboard.changeCount
-
-        // Restore focus to the app and only paste after it is frontmost. This keeps
-        // Replace from inserting text into whichever app the user clicked meanwhile.
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier != target.processIdentifier {
-            application.activate(options: [])
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
-                  pasteboard.changeCount == expectedPasteboardChangeCount else {
-                self.translationService.errorMessage = "The original text application is no longer focused; nothing was replaced."
-                return
+        TextInserter.insert(payload, into: target, restoreClipboard: false) { result in
+            switch result {
+            case .success:
+                self.onClose?()
+            case .failure(let error):
+                self.translationService.errorMessage = error.errorDescription
             }
-
-            // Re-focus the exact control captured before the popup opened when
-            // the source application exposes that accessibility attribute.
-            // Some applications reject this request; the frontmost-process
-            // check above remains the hard safety boundary in that case.
-            _ = AXUIElementSetAttributeValue(
-                target.element,
-                kAXFocusedAttribute as CFString,
-                kCFBooleanTrue
-            )
-
-            // Paste text (Command-V)
-            let source = CGEventSource(stateID: .hidSystemState)
-            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true) // V key
-            keyDown?.flags = .maskCommand
-            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-            keyDown?.post(tap: .cghidEventTap)
-            keyUp?.post(tap: .cghidEventTap)
-            self.onClose?()
         }
     }
 

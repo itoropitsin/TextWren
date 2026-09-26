@@ -139,12 +139,16 @@ struct TinyAIApp: App {
             MainTranslationView()
                 .environmentObject(translationService)
                 .environmentObject(keyboardMonitor)
+                .environmentObject(appDelegate.voiceStore)
+                .environmentObject(appDelegate.voiceCoordinator)
+                .environmentObject(appDelegate.localModelManager)
                 .onAppear {
                     appDelegate.translationService = translationService
                     appDelegate.keyboardMonitor = keyboardMonitor
                     keyboardMonitor.onPopupHotkey = { [weak appDelegate = appDelegate] payload in
                         appDelegate?.showTranslationPopup(with: payload)
                     }
+                    appDelegate.connectVoice(translationService: translationService, keyboardMonitor: keyboardMonitor)
                     appDelegate.startKeyboardMonitoringIfPermitted()
                 }
         }
@@ -235,8 +239,17 @@ private final class FirstMouseHostingView: NSHostingView<AnyView> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+extension Notification.Name {
+    static let tinyAIOpenSettings = Notification.Name("TinyAIOpenSettings")
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     var popupWindow: NSWindow?
+    let voiceStore = VoiceSettingsStore()
+    let localModelManager = LocalModelManager()
+    lazy var voiceCoordinator = VoiceCoordinator(store: voiceStore, modelManager: localModelManager)
+    private var statusBarController: StatusBarController?
+    private var responsePanel: AgentResponsePanelController?
     weak var translationService: TranslationService?
     var keyboardMonitor: KeyboardMonitor?
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "TinyAI", category: "AppDelegate")
@@ -289,6 +302,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard !TinyAIRuntime.isTestEnvironment else { return }
 
+        setUpVoice()
         requestMissingPermissionsAtLaunchIfNeeded()
         permissionObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
@@ -331,6 +345,51 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if !TinyAIPermissions.allGranted {
             logger.notice("Accessibility and Input Monitoring permissions are required for global hotkeys")
+        }
+    }
+
+    /// Hook the voice features up to the hotkeys and the OpenAI key.
+    func connectVoice(translationService: TranslationService, keyboardMonitor: KeyboardMonitor) {
+        let coordinator = voiceCoordinator
+        coordinator.openAIKeyProvider = { [weak translationService] in
+            translationService?.apiKey(for: .openAI) ?? ""
+        }
+        keyboardMonitor.onVoiceHotkey = { [weak coordinator] id, edge in
+            coordinator?.handleHotkey(id: id, edge: edge)
+        }
+        keyboardMonitor.onVoiceCancel = { [weak coordinator] in
+            coordinator?.cancel()
+        }
+        coordinator.keyboardMonitor = keyboardMonitor
+    }
+
+    private func setUpVoice() {
+        let coordinator = voiceCoordinator
+        let panel = AgentResponsePanelController(coordinator: coordinator)
+        responsePanel = panel
+        coordinator.onShowPanel = { [weak panel] in panel?.show() }
+        coordinator.onHidePanel = { [weak panel] in panel?.hide() }
+        statusBarController = StatusBarController(
+            coordinator: coordinator,
+            openMainWindow: { [weak self] in self?.showMainWindow() },
+            openSettings: { [weak self] in
+                self?.showMainWindow()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    NotificationCenter.default.post(name: .tinyAIOpenSettings, object: nil)
+                }
+            }
+        )
+    }
+
+    private func showMainWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.windows.first(where: { $0.canBecomeMain && !($0 is NSPanel) }) {
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            // Re-opening the running app makes SwiftUI create a new main window.
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
         }
     }
 

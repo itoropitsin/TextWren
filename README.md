@@ -10,6 +10,9 @@ prompts on any text, either in its own window or right where you are typing.
   and back, including when you paste into Slack, Notes or Google Docs.
 - **Up to five custom actions** such as Grammar, Summarize or "Create task", each with its own
   model and reasoning level.
+- **Voice.** Dictate into any app with a local speech model or OpenAI, ask your remote agents
+  (HTTP APIs or MCP servers) by voice and hear the answer, or talk live with GPT-Live-1 while it
+  uses your tools. A menu bar icon shows what is happening.
 
 ## Requirements
 
@@ -38,7 +41,9 @@ You can also build and run `TinyAI.xcodeproj` from Xcode.
 2. In **Settings → Primary**, choose what the two result panels show: the built-in Translate or
    one of your actions.
 3. When macOS asks, allow **Accessibility** and **Input Monitoring** for TinyAI (System Settings →
-   Privacy & Security). The popup hotkey and Replace need both. Relaunch TinyAI after granting them.
+   Privacy & Security). The popup hotkey, voice shortcuts and Replace need both. Relaunch TinyAI
+   after granting them.
+4. For voice features, allow **Microphone** access when asked (or in **Settings → Voice**).
 
 Settings are applied when you press **Save**; **Cancel** discards the changes.
 
@@ -59,6 +64,54 @@ Settings are applied when you press **Save**; **Cancel** discards the changes.
   replaces any request still running.
 - Choose a target language, or **Auto** to translate between your main and additional languages
   (set in **Settings → Primary**).
+
+### Dictation
+
+Hold **⌥Space** and speak, or tap it to start and tap again to stop; **Esc** cancels. The text is
+pasted where the cursor was, and your clipboard is put back afterwards. Change the shortcut and
+engine in **Settings → Voice**:
+
+| Engine | Model | Good for |
+| --- | --- | --- |
+| Local | Voxtral Mini 4B Realtime (2.8 GB) | Best quality, live text, 13 languages including Russian. Needs Apple Silicon and 16 GB RAM. |
+| Local | Nemotron Streaming 3.5 (750 MB) | Fast everyday dictation with live text, 28 languages including Russian. |
+| Local | Canary 180M Flash (220 MB) | Tiny and instant; English, German, Spanish, French. |
+| OpenAI | GPT Transcribe | Most accurate; sends the recording when you stop. |
+| OpenAI | GPT Live Transcribe | Streams while you talk for the lowest delay. |
+
+Local models are the ones Handy uses, run with transcribe.cpp on the Mac's GPU. Download them in
+**Settings → Voice**; each file is checked against a pinned SHA-256 and stored in
+`~/Library/Application Support/TinyAI/Models`. Audio for local models never leaves the Mac.
+
+### Agents
+
+**Settings → Agents** has two lists:
+
+- **Connections**: an **HTTP API** (URL, method, JSON body template, and the path to the answer
+  in the response) or an **MCP server** (Streamable HTTP). Authorization is either a secret
+  header stored in the Keychain, or, for MCP servers, **Sign in with browser**: OAuth in your
+  default browser with automatic client registration. **Test & load tools** lists the server's
+  tools.
+- **Agents**: each has its own voice shortcut and a connection (for MCP, the tool and a JSON
+  arguments template). Templates can use `{{transcript}}`, `{{sessionId}}`, `{{language}}` and
+  `{{agent}}`. Follow-ups within the configured minutes reuse the same `{{sessionId}}`.
+
+Hold an agent's shortcut and ask. The answer can appear in a floating panel, be pasted at the
+cursor, be copied, and be spoken with an OpenAI voice (with a style prompt) or a macOS voice.
+Requests wait up to the connection's timeout, so agents can think before answering.
+
+### Live conversation
+
+**Settings → Live** sets a shortcut that starts and ends a full-duplex conversation with
+**GPT-Live-1**. It keeps talking while its backend model (for example GPT-6 Luna) reasons and
+calls tools: web search, the tools of the MCP servers you pick, and your agents. Tool calls run
+on the Mac with each connection's sign-in. The transcript can be shown in a panel.
+
+### Menu bar
+
+The menu bar icon shows the state: ready, recording (red, pulsing), transcribing, an agent
+thinking, speaking, live, or an error. Its menu starts dictation, agents or a live conversation,
+cancels the current one, shows the last answer and the model download progress.
 
 ### Custom actions
 
@@ -94,7 +147,10 @@ Model output has em dashes (—) replaced with hyphens (-); code is left unchang
 
 ## Privacy
 
-- API keys are stored in the macOS Keychain.
+- API keys, connection header values and OAuth tokens are stored in the macOS Keychain.
+- The microphone records only while a voice shortcut is active or a live conversation runs.
+  With a local model, audio stays on the Mac; with OpenAI, the recording goes to OpenAI; agent
+  requests send only the transcript to your connection.
 - Text is sent to the selected provider only when an action runs: when you open the popup, or
   after a short pause while editing in the main window.
 
@@ -105,6 +161,12 @@ Model output has em dashes (—) replaced with hyphens (-); code is left unchang
   (lists, links, code, tables, a long text) with the expected result for each.
 - Model catalog and request rules (reasoning, token budget): `ModelCatalog` and
   `LLMRequestPolicy` in `TinyAI/TranslationService.swift`.
+- Local speech engine: `scripts/fetch_transcribe_cpp.sh` downloads the pinned transcribe.cpp
+  framework into `Vendor/` (the build script and the Xcode build phase run it). The local-engine
+  tests in `TinyAITests/VoiceFeatureTests.swift` run only when the model files are downloaded.
+- Voice flow: `VoiceCoordinator` (hotkeys → recording → transcription → dictation, agents, live),
+  `MCPClient`, `OAuthBrowserAuthorizer`, `HTTPAgentClient`, and the GPT-Live wire format in
+  `LiveProtocol`.
 - HTML handling: `RichTextHTMLParser` and `RichTextHTMLSanitizer` in
   `TinyAI/RichTextPayload.swift`. TinyAI parses HTML itself instead of using AppKit's importer,
   which crashes on macOS 27 for HTML with links.

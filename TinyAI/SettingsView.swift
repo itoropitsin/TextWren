@@ -4,6 +4,9 @@ import AppKit
 struct SettingsView: View {
     @EnvironmentObject var translationService: TranslationService
     @EnvironmentObject var keyboardMonitor: KeyboardMonitor
+    @EnvironmentObject var voiceStore: VoiceSettingsStore
+    @EnvironmentObject var voiceCoordinator: VoiceCoordinator
+    @EnvironmentObject var localModelManager: LocalModelManager
     @Environment(\.dismiss) var dismiss
     @State private var selectedTab: SettingsTab = .api
     @State private var openAIKey: String = ""
@@ -27,6 +30,8 @@ struct SettingsView: View {
     @State private var validatedKeyCandidates: [LLMProvider: String] = [:]
     @State private var keyValidationGeneration: [LLMProvider: Int] = [:]
     @State private var permissionRefreshToken = UUID()
+    @State private var voiceDraft = VoiceConfiguration()
+    @State private var headerSecretDrafts: [UUID: String] = [:]
 
     private let settingsLabelColumnWidth: CGFloat = 130
     private let settingsControlColumnWidth: CGFloat = 240
@@ -57,6 +62,13 @@ struct SettingsView: View {
                 case .styleContext: styleContextTab
                 case .hotkeys: hotkeysTab
                 case .api: apiTab
+                case .voice:
+                    VoiceSettingsTab(draft: $voiceDraft, modelManager: localModelManager, popupHotkey: popupHotkey)
+                case .agents:
+                    AgentsSettingsTab(draft: $voiceDraft, headerSecrets: $headerSecretDrafts, store: voiceStore,
+                                      coordinator: voiceCoordinator, popupHotkey: popupHotkey)
+                case .live:
+                    LiveSettingsTab(draft: $voiceDraft, popupHotkey: popupHotkey)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -86,6 +98,11 @@ struct SettingsView: View {
                         return
                     }
 
+                    if let voiceHotkeyError = VoiceHotkeySlots.firstError(in: voiceDraft, popupHotkey: popupHotkey) {
+                        apiAlert = APIAlert(title: "Voice shortcut conflict", message: voiceHotkeyError)
+                        return
+                    }
+
                     let normalizedActions = customActions.map { action in
                         var copy = action
                         copy.title = String(copy.title.prefix(25))
@@ -103,6 +120,12 @@ struct SettingsView: View {
                     translationService.saveActionStyleContextActionKeys(actionStyleContextActionKeys)
                     translationService.saveAPIKey(openAIKey, for: .openAI)
                     translationService.saveAPIKey(geminiKey, for: .gemini)
+                    for connection in voiceDraft.connections {
+                        if let secret = headerSecretDrafts[connection.id] {
+                            voiceStore.setHeaderSecret(connection.auth == .header ? secret : "", for: connection)
+                        }
+                    }
+                    voiceStore.save(voiceDraft)
 
                     if let error = keyboardMonitor.applyPopupHotkeySettings(shortcut: popupHotkey, pressMode: popupHotkeyPressMode) {
                         popupHotkeyError = error
@@ -118,8 +141,11 @@ struct SettingsView: View {
             .padding(.horizontal)
             .padding(.bottom)
         }
-        .frame(width: 520, height: 720)
+        .frame(width: 660, height: 760)
         .onAppear {
+            voiceDraft = voiceStore.configuration
+            headerSecretDrafts = [:]
+            localModelManager.refresh()
             openAIKey = translationService.apiKey
             geminiKey = translationService.geminiAPIKey
             customActions = translationService.customActions.map { action in
@@ -741,6 +767,9 @@ private enum SettingsTab: Hashable, CaseIterable {
     case styleContext
     case hotkeys
     case api
+    case voice
+    case agents
+    case live
 
     var title: String {
         switch self {
@@ -749,6 +778,9 @@ private enum SettingsTab: Hashable, CaseIterable {
         case .styleContext: return "Style"
         case .hotkeys: return "Hotkeys"
         case .api: return "API"
+        case .voice: return "Voice"
+        case .agents: return "Agents"
+        case .live: return "Live"
         }
     }
 
@@ -759,6 +791,9 @@ private enum SettingsTab: Hashable, CaseIterable {
         case .styleContext: return "text.quote"
         case .hotkeys: return "keyboard"
         case .api: return "key.fill"
+        case .voice: return "mic.fill"
+        case .agents: return "person.wave.2.fill"
+        case .live: return "waveform"
         }
     }
 }
@@ -769,7 +804,7 @@ private struct APIAlert: Identifiable {
     let message: String
 }
 
-private struct KeyboardShortcutRecorder: View {
+struct KeyboardShortcutRecorder: View {
     let shortcut: KeyboardShortcut
     let isInvalid: Bool
     let width: CGFloat
@@ -815,7 +850,7 @@ private struct KeyboardShortcutRecorder: View {
     }
 }
 
-private struct InsetTextEditor: NSViewRepresentable {
+struct InsetTextEditor: NSViewRepresentable {
     @Binding var text: String
     var inset: CGSize = CGSize(width: 6, height: 8)
 

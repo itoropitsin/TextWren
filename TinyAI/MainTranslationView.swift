@@ -3,6 +3,9 @@ import AppKit
 
 struct MainTranslationView: View {
     @EnvironmentObject var translationService: TranslationService
+    @EnvironmentObject var voiceStore: VoiceSettingsStore
+    @EnvironmentObject var voiceCoordinator: VoiceCoordinator
+    @EnvironmentObject var localModelManager: LocalModelManager
     @State private var sourceText: String = ""
     @State private var sourcePreparedInput: PreparedRichText = RichTextConverter.prepare(markdown: "")
     @State private var textChangeGeneration: Int = 0
@@ -136,6 +139,12 @@ struct MainTranslationView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .environmentObject(translationService)
+                .environmentObject(voiceStore)
+                .environmentObject(voiceCoordinator)
+                .environmentObject(localModelManager)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .tinyAIOpenSettings)) { _ in
+            showSettings = true
         }
         .sheet(isPresented: $showHelp) {
             HelpView()
