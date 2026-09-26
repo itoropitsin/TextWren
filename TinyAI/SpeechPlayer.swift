@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 
 /// Speaks agent answers with an OpenAI voice or a macOS system voice.
@@ -161,8 +161,9 @@ final class SpeechPlayer: NSObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDe
     }
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        let finished = ObjectIdentifier(player)
         DispatchQueue.main.async { [weak self] in
-            guard let self, player === self.player else { return }
+            guard let self, let current = self.player, ObjectIdentifier(current) == finished else { return }
             self.playNextChunk(index: self.playingIndex + 1, generation: self.generation)
         }
     }

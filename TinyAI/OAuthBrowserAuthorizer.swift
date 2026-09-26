@@ -417,15 +417,15 @@ final class LoopbackListener {
             self?.handle(connection)
         }
         let port: UInt16 = try await withCheckedThrowingContinuation { (ready: CheckedContinuation<UInt16, Error>) in
-            var resumed = false
+            let resumed = ResumeFlag()
             listener.stateUpdateHandler = { [weak listener] state in
-                guard !resumed else { return }
+                guard !resumed.value else { return }
                 switch state {
                 case .ready:
-                    resumed = true
+                    resumed.value = true
                     ready.resume(returning: listener?.port?.rawValue ?? 0)
                 case .failed(let error):
-                    resumed = true
+                    resumed.value = true
                     ready.resume(throwing: OAuthError.listenerFailed(error.localizedDescription))
                 default:
                     break
@@ -491,4 +491,9 @@ final class LoopbackListener {
             }
         }
     }
+}
+
+/// Guards a continuation resumed from the listener's serial queue.
+private nonisolated final class ResumeFlag: @unchecked Sendable {
+    var value = false
 }

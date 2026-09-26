@@ -20,17 +20,17 @@ final class LocalModelManager: ObservableObject {
     private var tasks: [LocalTranscriptionModel: URLSessionDownloadTask] = [:]
     private var progressObservers: [LocalTranscriptionModel: NSKeyValueObservation] = [:]
 
-    static var modelsDirectory: URL {
+    nonisolated static var modelsDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         return base.appendingPathComponent("TinyAI/Models", isDirectory: true)
     }
 
-    static func fileURL(for model: LocalTranscriptionModel) -> URL {
+    nonisolated static func fileURL(for model: LocalTranscriptionModel) -> URL {
         modelsDirectory.appendingPathComponent(model.filename)
     }
 
-    static func isDownloaded(_ model: LocalTranscriptionModel) -> Bool {
+    nonisolated static func isDownloaded(_ model: LocalTranscriptionModel) -> Bool {
         FileManager.default.fileExists(atPath: fileURL(for: model).path)
     }
 
@@ -119,7 +119,7 @@ final class LocalModelManager: ObservableObject {
         states[model] = .verifying
         let expected = model.sha256
         let destination = Self.fileURL(for: model)
-        DispatchQueue.global(qos: .utility).async {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
             let actual = Self.sha256(of: staging)
             var failure: String?
             if actual == expected {
@@ -133,7 +133,7 @@ final class LocalModelManager: ObservableObject {
                 try? FileManager.default.removeItem(at: staging)
                 failure = "The downloaded file is damaged (checksum mismatch)."
             }
-            DispatchQueue.main.async { [weak self] in
+            DispatchQueue.main.async {
                 self?.states[model] = failure.map { .failed($0) } ?? .ready
             }
         }
