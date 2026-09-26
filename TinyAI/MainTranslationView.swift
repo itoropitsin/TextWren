@@ -47,10 +47,13 @@ struct MainTranslationView: View {
                 
                 ZStack(alignment: .topLeading) {
                     if sourceText.isEmpty {
+                        // Outer padding (8) + the text view's container inset
+                        // (10) puts the placeholder where the caret starts.
                         Text("Enter text to translate...")
+                            .font(Font(NSFont.preferredFont(forTextStyle: .body)))
                             .foregroundColor(.secondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
+                            .padding(18)
+                            .allowsHitTesting(false)
                     }
                     
                     RichTextEditor(prepared: $sourcePreparedInput, onChange: handleSourceTextChange)

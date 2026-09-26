@@ -39,27 +39,27 @@ struct SettingsView: View {
                 .font(.title2)
                 .padding(.top)
 
-            TabView(selection: $selectedTab) {
-                primaryActionsTab
-                    .tag(SettingsTab.primaryActions)
-                    .tabItem { Label("Primary Actions", systemImage: "star.fill") }
-
-                customActionsTab
-                    .tag(SettingsTab.customActions)
-                    .tabItem { Label("Custom Actions", systemImage: "bolt.fill") }
-
-                styleContextTab
-                    .tag(SettingsTab.styleContext)
-                    .tabItem { Label("Style Context", systemImage: "text.quote") }
-
-                hotkeysTab
-                    .tag(SettingsTab.hotkeys)
-                    .tabItem { Label("Hotkeys", systemImage: "keyboard") }
-
-                apiTab
-                    .tag(SettingsTab.api)
-                    .tabItem { Label("API", systemImage: "key.fill") }
+            // A custom segmented header: the system TabView tab bar collapses
+            // into overlapping, truncated labels in this sheet on macOS 27.
+            Picker("", selection: $selectedTab) {
+                ForEach(SettingsTab.allCases, id: \.self) { tab in
+                    Label(tab.title, systemImage: tab.systemImage).tag(tab)
+                }
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal)
+
+            Group {
+                switch selectedTab {
+                case .primaryActions: primaryActionsTab
+                case .customActions: customActionsTab
+                case .styleContext: styleContextTab
+                case .hotkeys: hotkeysTab
+                case .api: apiTab
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             HStack {
                 Button("Cancel") {
@@ -734,12 +734,32 @@ struct SettingsView: View {
     }
 }
 
-private enum SettingsTab: Hashable {
-    case api
-    case hotkeys
+private enum SettingsTab: Hashable, CaseIterable {
     case primaryActions
     case customActions
     case styleContext
+    case hotkeys
+    case api
+
+    var title: String {
+        switch self {
+        case .primaryActions: return "Primary"
+        case .customActions: return "Actions"
+        case .styleContext: return "Style"
+        case .hotkeys: return "Hotkeys"
+        case .api: return "API"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .primaryActions: return "star.fill"
+        case .customActions: return "bolt.fill"
+        case .styleContext: return "text.quote"
+        case .hotkeys: return "keyboard"
+        case .api: return "key.fill"
+        }
+    }
 }
 
 private struct APIAlert: Identifiable {
