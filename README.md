@@ -7,7 +7,7 @@ prompts on any text, either in its own window or right where you are typing.
   <img src="docs/popup.png" alt="TinyAI popup over a web page: the selected text translated into Japanese with formatting kept, and a Grammar result, each with Replace" width="420">
 </p>
 <p align="center">
-  <img src="docs/main-window.png" alt="TinyAI main window with source text, Translate and Grammar panels" width="720">
+  <img src="docs/main-window.png" alt="TinyAI main window: formatted English source with links, its Japanese translation and the Grammar result" width="720">
 </p>
 <p align="center">
   <img src="docs/dictation.png" alt="Dictation popup under the menu bar icon, showing live text while listening" width="420">
