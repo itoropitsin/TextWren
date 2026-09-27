@@ -197,6 +197,10 @@ struct VoiceSettingsTab: View {
                         }
                         SettingsNote(text: OpenAITranscriptionModel.resolve(draft.transcription.openAIModel).summary
                                      + " Uses the OpenAI key from the API tab.")
+                        SettingsRow(label: "") {
+                            Link("Current OpenAI pricing ↗", destination: URL(string: "https://developers.openai.com/api/docs/pricing")!)
+                                .font(.caption)
+                        }
                     }
 
                     SettingsRow(label: "Language") {
@@ -297,6 +301,17 @@ struct VoiceSettingsTab: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Text("Languages: \(model.featuredLanguages)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(model.memoryDescription)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Link("Capabilities on Hugging Face ↗", destination: model.modelCardURL)
+                    .font(.caption)
+                    .help("Open the model card in your default browser")
                 HStack(spacing: 8) {
                     switch state {
                     case .notDownloaded:
@@ -323,7 +338,6 @@ struct VoiceSettingsTab: View {
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
-        .onTapGesture { draft.transcription.localModel = model }
         .hoverRowHighlight()
     }
 }

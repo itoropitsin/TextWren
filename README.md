@@ -28,13 +28,27 @@ Build and install into `/Applications` (replaces an older version and relaunches
 zsh scripts/build_and_install.sh
 ```
 
-The script needs an Apple Development certificate for team `Y29LYS5D8M` and refuses to install a
-version that is not newer than the installed one. Bump `MARKETING_VERSION` and
+For this Mac, the script uses the `TinyAI Local Code Signing` identity in the login Keychain.
+It pins that certificate's SHA-1 fingerprint in the script so a different certificate with the
+same name cannot silently sign an update. If that identity is unavailable, the script can use an
+Apple Development certificate for team `Y29LYS5D8M`. The script refuses to install a version
+that is not newer than the installed one. Bump `MARKETING_VERSION` and
 `CURRENT_PROJECT_VERSION` in Xcode and the matching `version` and `build_number` at the top of the
-script together. Use `--build-only` for an unsigned test build. For an ad hoc signed
+script together. Use `--build-only` to compile without installing. For an ad hoc signed
 release archive without a certificate, run `zsh scripts/sign_release_ad_hoc.sh /path/to/TinyAI.app`
 after building and before creating the ZIP. Ad hoc signatures can change between builds, so macOS
 may require Accessibility to be granted again after an update.
+
+The local identity is for this Mac only. Keep its private key in the login Keychain, and back up
+the certificate and private key securely before migrating to another Mac. Creating a new local
+certificate changes the app's signing identity. Local signatures cannot be notarized or used for
+public distribution. macOS still requires each permission to be granted initially; stable signing
+only gives later updates a consistent code identity, and permission retention should be checked
+on the target Mac after updating.
+The local build uses a Library Validation runtime exception to load its bundled CTranscribe
+framework because a self-signed certificate has no Apple Team ID. The framework is still signed
+with the same local certificate and verified before installation. Apple Development builds use
+the standard entitlements without this exception.
 
 You can also build and run `TinyAI.xcodeproj` from Xcode.
 
@@ -46,7 +60,7 @@ You can also build and run `TinyAI.xcodeproj` from Xcode.
    one of your actions.
 3. When macOS asks, allow **Accessibility** for TinyAI (System Settings → Privacy & Security).
    The popup hotkey, voice shortcuts and Replace need it. If a previously enabled entry does not
-   work after an update without Developer ID signing, remove it, add `/Applications/TinyAI.app`,
+   work after an update, remove it, add `/Applications/TinyAI.app`,
    enable it and relaunch.
 4. For voice features, allow **Microphone** access when asked (or in **Settings → Voice**).
 
@@ -80,11 +94,15 @@ shortcuts are preserved. Change the shortcut and engine in **Settings → Voice*
 
 | Engine | Model | Good for |
 | --- | --- | --- |
-| Local | Voxtral Mini 4B Realtime (2.8 GB) | Best quality, live text, 13 languages including Russian. Needs Apple Silicon and 16 GB RAM. |
-| Local | Nemotron Streaming 3.5 (750 MB) | Fast everyday dictation with live text, 28 languages including Russian. |
-| Local | Canary 180M Flash (220 MB) | Tiny and instant; English, German, Spanish, French. |
-| OpenAI | GPT Transcribe | Most accurate; sends the recording when you stop. |
-| OpenAI | GPT Live Transcribe | Streams while you talk for the lowest delay. |
+| Local | [Voxtral Mini 4B Realtime](https://huggingface.co/handy-computer/Voxtral-Mini-4B-Realtime-2602-gguf) | Live text, 13 languages. Examples: English, Mandarin, Hindi, Spanish, Arabic. Model weights need about 2.8 GB RAM, plus runtime memory. |
+| Local | [Nemotron Streaming 3.5](https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf) | Fast live text, 28 languages in TinyAI. Examples: English, Mandarin, Hindi, Spanish, Arabic. Model weights need about 750 MB RAM, plus runtime memory. |
+| Local | [Canary 180M Flash](https://huggingface.co/handy-computer/canary-180m-flash-gguf) | Small offline model. Its four languages are English, Spanish, French and German. Model weights need about 220 MB RAM, plus runtime memory. |
+| OpenAI | GPT Live Transcribe (default) | Streams while you talk. [OpenAI list price](https://developers.openai.com/api/docs/pricing): $0.017/minute. |
+| OpenAI | GPT Transcribe | Transcribes after recording stops. [OpenAI list price](https://developers.openai.com/api/docs/pricing): $0.0045/minute. |
+
+When a new installation has neither an OpenAI API key nor a downloaded local model, TinyAI offers
+to download Nemotron for local dictation. Download and RAM figures are approximate; actual memory
+use depends on the runtime and recording length.
 
 Local models are the ones Handy uses, run with transcribe.cpp on the Mac's GPU. Download them in
 **Settings → Voice**; each file is checked against a pinned SHA-256 and stored in

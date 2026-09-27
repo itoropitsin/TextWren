@@ -8,7 +8,7 @@ struct SettingsView: View {
     @EnvironmentObject var voiceCoordinator: VoiceCoordinator
     @EnvironmentObject var localModelManager: LocalModelManager
     @Environment(\.dismiss) var dismiss
-    @State private var selectedTab: SettingsTab = .api
+    @State private var selectedTab: SettingsTab
     @State private var openAIKey: String = ""
     @State private var geminiKey: String = ""
     @State private var busyProviders: Set<LLMProvider> = []
@@ -37,6 +37,10 @@ struct SettingsView: View {
     private let settingsControlColumnWidth: CGFloat = 240
     private let customActionModelPickerWidth: CGFloat = 220
     private let autoTranslateLanguages = TranslationService.supportedLanguages
+
+    init(openVoiceTab: Bool = false) {
+        _selectedTab = State(initialValue: openVoiceTab ? .voice : .api)
+    }
 
     var body: some View {
         VStack(spacing: 16) {
