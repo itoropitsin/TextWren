@@ -217,7 +217,7 @@ struct VoiceSettingsTab: View {
 
                     if draft.transcription.engine == .openAI {
                         SettingsRow(label: "Vocabulary", alignment: .top) {
-                            TextField("Names and terms, e.g. TinyAI, Manychat", text: $draft.transcription.vocabulary, axis: .vertical)
+                            TextField("Names and terms, e.g. TinyAI, Kubernetes", text: $draft.transcription.vocabulary, axis: .vertical)
                                 .textFieldStyle(.roundedBorder)
                                 .lineLimit(2...4)
                         }
