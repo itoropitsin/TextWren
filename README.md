@@ -238,3 +238,8 @@ Model output has em dashes (—) replaced with hyphens (-); code is left unchang
 - HTML handling: `RichTextHTMLParser` and `RichTextHTMLSanitizer` in
   `TinyAI/RichTextPayload.swift`. TinyAI parses HTML itself instead of using AppKit's importer,
   which crashes on macOS 27 for HTML with links.
+
+## License
+
+TinyAI is released under the [MIT License](LICENSE). The bundled transcribe.cpp and llama.cpp
+frameworks and the downloaded models keep their own licenses.
