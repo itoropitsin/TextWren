@@ -3,6 +3,16 @@
 TinyAI is a small macOS app for everyday writing. It translates, fixes grammar, and runs your own
 prompts on any text, either in its own window or right where you are typing.
 
+<p align="center">
+  <img src="docs/popup.png" alt="TinyAI popup over a web page: the selected text translated into Japanese with formatting kept, and a Grammar result, each with Replace" width="420">
+</p>
+<p align="center">
+  <img src="docs/main-window.png" alt="TinyAI main window: formatted English source with links, its Japanese translation and the Grammar result" width="720">
+</p>
+<p align="center">
+  <img src="docs/dictation.png" alt="Dictation popup under the menu bar icon, showing live text while listening" width="420">
+</p>
+
 - **Popup in any app.** Select text, press **⌘C twice**, get the result, then **Replace** the
   selection or **Copy** it.
 - **Main window** for longer text, with results that update as you type.
@@ -238,3 +248,8 @@ Model output has em dashes (—) replaced with hyphens (-); code is left unchang
 - HTML handling: `RichTextHTMLParser` and `RichTextHTMLSanitizer` in
   `TinyAI/RichTextPayload.swift`. TinyAI parses HTML itself instead of using AppKit's importer,
   which crashes on macOS 27 for HTML with links.
+
+## License
+
+TinyAI is released under the [MIT License](LICENSE). The bundled transcribe.cpp and llama.cpp
+frameworks and the downloaded models keep their own licenses.

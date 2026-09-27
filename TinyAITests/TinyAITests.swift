@@ -863,6 +863,12 @@ struct ModelCatalogTests {
         #expect(TranslationService.defaultModel == ModelCatalog.defaultModel)
     }
 
+    @Test func defaultModelEntry_marksItsOwnEffortAsDefault() throws {
+        let entry = try #require(ModelCatalog.entry(for: ModelCatalog.defaultModel))
+        #expect(entry.defaultReasoningEffort == ModelCatalog.defaultModel.reasoningEffort)
+        #expect(entry.resolvedEffort(nil) == .low)
+    }
+
     @Test func catalog_containsOnlyGPT5Plus_andGemini3Plus() {
         for entry in ModelCatalog.all {
             switch entry.model.provider {

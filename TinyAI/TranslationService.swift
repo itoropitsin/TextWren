@@ -129,7 +129,7 @@ enum ModelCatalog {
     static let all: [SupportedModel] = [
         // GPT-6
         SupportedModel(model: LLMModel(provider: .openAI, name: "gpt-6-luna"), displayName: "GPT-6 Luna",
-                       reasoningEfforts: openAIFullRange, defaultReasoningEffort: .high),
+                       reasoningEfforts: openAIFullRange, defaultReasoningEffort: .low),
         SupportedModel(model: LLMModel(provider: .openAI, name: "gpt-6-sol"), displayName: "GPT-6 Sol",
                        reasoningEfforts: openAIFullRange, defaultReasoningEffort: .medium),
         SupportedModel(model: LLMModel(provider: .openAI, name: "gpt-6-astra"), displayName: "GPT-6 Astra",
