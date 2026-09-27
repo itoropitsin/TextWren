@@ -17,18 +17,33 @@ prompts on any text, either in its own window or right where you are typing.
 
 ## Requirements
 
-- macOS 14.6 or later
-- An OpenAI or Google Gemini API key
+- macOS 14.6 or later (Apple Silicon recommended for the on-device models)
+- An OpenAI or Google Gemini API key, or none at all: the on-device text and speech models run
+  without a key
 
 ## Install
 
-Build and install into `/Applications` (replaces an older version and relaunches the app):
+1. Download `TinyAI.zip` from the [latest release](https://github.com/itoropitsin/TinyAI/releases/latest)
+   and open it.
+2. Move `TinyAI.app` to **Applications**.
+3. The app is ad hoc signed, not notarized. If macOS blocks the first launch, Control-click
+   `TinyAI.app` and choose **Open**, or use **System Settings → Privacy & Security → Open Anyway**.
+
+### Build from source
+
+Open `TinyAI.xcodeproj` in Xcode and run the `TinyAI` scheme. The build phase downloads the pinned
+transcribe.cpp and llama.cpp frameworks into `Vendor/`. To compile the release app from the command
+line without installing it, run:
 
 ```bash
-zsh scripts/build_and_install.sh
+zsh scripts/build_and_install.sh --build-only
 ```
 
-For this Mac, the script uses the `TinyAI Local Code Signing` identity in the login Keychain.
+Without `--build-only` the script signs the app, installs it into `/Applications`, replaces an
+older version and relaunches it. It needs one of the maintainer's signing identities, described
+below.
+
+For the maintainer's Mac, the script uses the `TinyAI Local Code Signing` identity in the login Keychain.
 It pins that certificate's SHA-1 fingerprint in the script so a different certificate with the
 same name cannot silently sign an update. If that identity is unavailable, the script can use an
 Apple Development certificate for team `Y29LYS5D8M`. The script refuses to install a version
@@ -50,12 +65,10 @@ framework because a self-signed certificate has no Apple Team ID. The framework 
 with the same local certificate and verified before installation. Apple Development builds use
 the standard entitlements without this exception.
 
-You can also build and run `TinyAI.xcodeproj` from Xcode.
-
 ## Set up
 
 1. Open **Settings → API** and paste an OpenAI and/or Gemini key. Keys are checked before they are
-   saved.
+   saved. To stay fully offline, download the on-device models there instead.
 2. In **Settings → Primary**, choose what the two result panels show: the built-in Translate or
    one of your actions.
 3. When macOS asks, allow **Accessibility** for TinyAI (System Settings → Privacy & Security).
@@ -105,7 +118,7 @@ to download Nemotron for local dictation. Download and RAM figures are approxima
 use depends on the runtime and recording length.
 
 Local models are the ones Handy uses, run with transcribe.cpp on the Mac's GPU. Download them in
-**Settings → Voice**; each file is checked against a pinned SHA-256 and stored in
+**Settings → Voice** or **Settings → API**; each file is checked against a pinned SHA-256 and stored in
 `~/Library/Application Support/TinyAI/Models`. Audio for local models never leaves the Mac.
 
 ### Agents (Beta)
@@ -189,8 +202,8 @@ with a growing budget and are much slower. Typical wait for a sentence or two on
 | Low | about 30 s |
 | Medium | about 2 min |
 | High | about 6 min |
- The model loads on first use and is freed after five
-idle minutes.
+
+The model loads on first use and is freed after five idle minutes.
 
 Model output has em dashes (—) replaced with hyphens (-); code is left unchanged.
 

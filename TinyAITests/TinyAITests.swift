@@ -468,8 +468,8 @@ struct TinyAITests {
         <p>Я окей, если мы оставим <a href="https://example.com/model"><strong>всю работу модели</strong></a> без заскриптованных проверок.</p>
         <p>Нынешний функционал должен продолжить работать:</p>
         <ul>
-          <li><a href="https://github.com/manychat-internal-it/docs/pull/25">docs #25</a> — rename-stale Barcelona link</li>
-          <li><a href="https://github.com/manychat-internal-it/scripts_manychat/pull/11"><em>scripts_manychat #11</em></a> — stale replacement path</li>
+          <li><a href="https://github.com/example-org/docs/pull/25">docs #25</a> — rename-stale Barcelona link</li>
+          <li><a href="https://github.com/example-org/scripts_example/pull/11"><em>scripts_example #11</em></a> — stale replacement path</li>
         </ul>
         <p><code>keep-this-code()</code></p>
         </body></html>
@@ -491,8 +491,8 @@ struct TinyAITests {
         let destinations = links(in: prepared.attributed)
         #expect(destinations == [
             "https://example.com/model",
-            "https://github.com/manychat-internal-it/docs/pull/25",
-            "https://github.com/manychat-internal-it/scripts_manychat/pull/11"
+            "https://github.com/example-org/docs/pull/25",
+            "https://github.com/example-org/scripts_example/pull/11"
         ])
         #expect(RichTextConverter.modelHTML(from: prepared)?.contains("https://example.com/model") == true)
         #expect(RichTextConverter.modelHTML(from: prepared)?.contains("<ul>") == true)
@@ -503,14 +503,14 @@ struct TinyAITests {
         let rereadPrepared = RichTextConverter.prepare(payload: reread)
         #expect(links(in: rereadPrepared.attributed) == destinations)
         #expect(rereadPrepared.plain.contains("docs #25"))
-        #expect(rereadPrepared.plain.contains("scripts_manychat #11"))
+        #expect(rereadPrepared.plain.contains("scripts_example #11"))
 
         // A model may translate the visible labels while leaving href values
         // untouched.  The prepared response remains safe to Copy/Replace.
         let modelHTML = """
         <html><body><p><a href="https://example.com/model">всю работу модели</a></p>
-        <p><a href="https://github.com/manychat-internal-it/docs/pull/25">документация №25</a></p>
-        <p><a href="https://github.com/manychat-internal-it/scripts_manychat/pull/11">скрипты manychat №11</a></p></body></html>
+        <p><a href="https://github.com/example-org/docs/pull/25">документация №25</a></p>
+        <p><a href="https://github.com/example-org/scripts_example/pull/11">скрипты example №11</a></p></body></html>
         """
         let modelPrepared = try #require(RichTextConverter.prepare(html: modelHTML))
         #expect(links(in: modelPrepared.attributed) == destinations)
@@ -589,8 +589,8 @@ struct TinyAITests {
     }
 
     @Test func rtfOnlyInput_preservesLinkDestinationThroughCopyRead() throws {
-        let destination = "https://github.com/manychat-internal-it/scripts_manychat/pull/11"
-        let source = NSMutableAttributedString(string: "scripts manychat #11")
+        let destination = "https://github.com/example-org/scripts_example/pull/11"
+        let source = NSMutableAttributedString(string: "scripts example #11")
         source.addAttribute(.link, value: URL(string: destination)!, range: NSRange(location: 0, length: source.length))
         let rtf = try #require(RichTextConverter.rtf(from: source))
         let payload = RichTextPayload(plain: source.string, html: nil, rtf: rtf)
@@ -1120,7 +1120,7 @@ struct PromptTests {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let service = TranslationService(keychainClient: CountingKeychainClient(), defaults: defaults)
-        service.saveActionStyleContext("You are working with Ivan - IT Team Lead")
+        service.saveActionStyleContext("You are working with Alex - IT Team Lead")
         service.saveActionStyleContextActionKeys([TranslationService.builtInTranslateSelectionKey])
 
         let prompt = service.translateSystemPrompt(
@@ -1128,7 +1128,7 @@ struct PromptTests {
             actionKey: TranslationService.builtInTranslateSelectionKey
         )
         #expect(prompt.contains(TranslationService.inputIsContentRule))
-        #expect(prompt.contains(TranslationService.actionStyleContextLabel + ":\nYou are working with Ivan"))
+        #expect(prompt.contains(TranslationService.actionStyleContextLabel + ":\nYou are working with Alex"))
         #expect(!prompt.contains("Additional style context"))
     }
 
