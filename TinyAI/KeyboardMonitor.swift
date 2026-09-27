@@ -565,6 +565,7 @@ class KeyboardMonitor: ObservableObject {
         thread.startAndWait()
         eventTapThread = thread
         CGEvent.tapEnable(tap: eventTap, enable: true)
+        TinyAIPermissions.activeEventTap = eventTap
     }
 
     /// Runs on the event-tap thread.  It only decides whether to pass or

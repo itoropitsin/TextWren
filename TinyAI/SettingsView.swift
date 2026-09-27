@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 struct SettingsView: View {
     @EnvironmentObject var translationService: TranslationService
@@ -206,15 +207,45 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                 }
 
+                Divider()
+
                 VStack(alignment: .leading, spacing: 12) {
                     Text("On-device models")
                         .font(.headline)
 
                     ForEach(LocalLanguageModel.allCases) { model in
-                        LocalLanguageModelRow(model: model, modelManager: localModelManager)
+                        LocalModelRow(
+                            asset: .language(model),
+                            title: model.displayName,
+                            details: "\(model.formattedSize) download · \(model.memoryFootprint)",
+                            useCase: model.useCase,
+                            modelManager: localModelManager
+                        )
                     }
 
                     Text("Choose them as the model for translation or any action. They run with llama.cpp and need no key; the model loads on first use and is freed after five idle minutes.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Voice models")
+                        .font(.headline)
+
+                    ForEach(LocalTranscriptionModel.allCases) { model in
+                        LocalModelRow(
+                            asset: .transcription(model),
+                            title: model.displayName,
+                            details: "\(model.formattedSize) download",
+                            useCase: model.useCase,
+                            modelManager: localModelManager
+                        )
+                    }
+
+                    Text("On-device speech recognition for dictation. Pick the active model in the Voice tab.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -523,6 +554,10 @@ struct SettingsView: View {
         }
         .padding(.top, 8)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            permissionRefreshToken = UUID()
+        }
+        // System Settings can change the grant while this sheet stays open.
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
             permissionRefreshToken = UUID()
         }
     }
@@ -1056,41 +1091,44 @@ private extension ReasoningEffort {
     }
 }
 
-/// Download, progress and delete controls for one on-device text model.
-private struct LocalLanguageModelRow: View {
-    let model: LocalLanguageModel
+/// Download, progress and delete controls for one on-device model.
+private struct LocalModelRow: View {
+    let asset: LocalModelAsset
+    let title: String
+    let details: String
+    let useCase: String
     @ObservedObject var modelManager: LocalModelManager
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(model.displayName).fontWeight(.semibold)
-                Text("\(model.formattedSize) download · \(model.memoryFootprint)")
+                Text(title).fontWeight(.semibold)
+                Text(details)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            Text(model.useCase)
+            Text(useCase)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
-                switch modelManager.state(for: model) {
+                switch modelManager.state(for: asset) {
                 case .notDownloaded:
-                    Button("Download") { modelManager.download(model) }.controlSize(.small)
+                    Button("Download") { modelManager.download(asset) }.controlSize(.small)
                 case .downloading(let progress):
                     ProgressView(value: progress).frame(width: 140)
                     Text("\(Int(progress * 100))%").font(.caption).monospacedDigit()
-                    Button("Cancel") { modelManager.cancelDownload(model) }.controlSize(.small)
+                    Button("Cancel") { modelManager.cancelDownload(asset) }.controlSize(.small)
                 case .verifying:
                     ProgressView().controlSize(.small)
                     Text("Verifying…").font(.caption)
                 case .ready:
                     Label("Downloaded", systemImage: "checkmark.circle.fill")
                         .font(.caption).foregroundColor(.green)
-                    Button("Delete") { modelManager.delete(model) }.controlSize(.small)
+                    Button("Delete") { modelManager.delete(asset) }.controlSize(.small)
                 case .failed(let message):
                     Text(message).font(.caption).foregroundColor(.red).lineLimit(2)
-                    Button("Retry") { modelManager.download(model) }.controlSize(.small)
+                    Button("Retry") { modelManager.download(asset) }.controlSize(.small)
                 }
             }
         }

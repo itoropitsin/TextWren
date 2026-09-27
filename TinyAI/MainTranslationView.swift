@@ -31,6 +31,11 @@ struct MainTranslationView: View {
     @State private var secondaryTitle: String = "Starred 2"
     @State private var primaryResultFraction: CGFloat = 0.5
     @State private var resizeStartFraction: CGFloat?
+    @State private var isHoveringResizeHandle: Bool = false
+    @State private var isResizeCursorShown: Bool = false
+
+    private let resultsSpace = "results"
+    private let dividerHitHeight: CGFloat = 22
 
     let languages = [TranslationService.languageAutoSelection] + TranslationService.supportedLanguages
 
@@ -92,25 +97,45 @@ struct MainTranslationView: View {
                     VStack(spacing: 0) {
                         primarySection.frame(height: primaryHeight)
 
+                        // The handle is invisible. Its hit area reaches past the
+                        // gap into the neighbouring sections so it is easy to
+                        // grab, and the drag is measured in the stable parent
+                        // space: the handle's own space moves with it, which
+                        // made the lower section jump back and forth.
                         Color.clear
                             .frame(height: dividerHeight)
-                            .contentShape(Rectangle())
-                            .onHover { hovering in
-                                if hovering { NSCursor.resizeUpDown.push() }
-                                else { NSCursor.pop() }
-                            }
-                            .gesture(DragGesture(minimumDistance: 0)
-                                .onChanged { drag in
-                                    guard availableHeight > 0 else { return }
-                                    if resizeStartFraction == nil {
-                                        resizeStartFraction = primaryResultFraction
+                            .overlay(
+                                Color.clear
+                                    .frame(height: dividerHitHeight)
+                                    .contentShape(Rectangle())
+                                    .onHover { hovering in
+                                        isHoveringResizeHandle = hovering
+                                        updateResizeCursor()
                                     }
-                                    let minimumFraction = minimumSectionHeight / availableHeight
-                                    let requestedFraction = (resizeStartFraction ?? primaryResultFraction)
-                                        + drag.translation.height / availableHeight
-                                    primaryResultFraction = min(max(requestedFraction, minimumFraction), 1 - minimumFraction)
-                                }
-                                .onEnded { _ in resizeStartFraction = nil })
+                                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named(resultsSpace))
+                                        .onChanged { drag in
+                                            guard availableHeight > 0 else { return }
+                                            if resizeStartFraction == nil {
+                                                resizeStartFraction = primaryResultFraction
+                                                updateResizeCursor()
+                                            }
+                                            let minimumFraction = minimumSectionHeight / availableHeight
+                                            let requestedFraction = (resizeStartFraction ?? primaryResultFraction)
+                                                + drag.translation.height / availableHeight
+                                            let fraction = min(max(requestedFraction, minimumFraction), 1 - minimumFraction)
+                                            // Whole points only, so the sections never
+                                            // shimmer on sub-pixel changes.
+                                            let rounded = (fraction * availableHeight).rounded() / availableHeight
+                                            if abs(rounded - primaryResultFraction) > .ulpOfOne {
+                                                primaryResultFraction = rounded
+                                            }
+                                        }
+                                        .onEnded { _ in
+                                            resizeStartFraction = nil
+                                            updateResizeCursor()
+                                        })
+                            )
+                            .zIndex(1)
                             .accessibilityElement()
                             .accessibilityLabel("Resize result panels")
                             .accessibilityAdjustableAction { direction in
@@ -123,6 +148,7 @@ struct MainTranslationView: View {
 
                         secondarySection.frame(height: availableHeight - primaryHeight)
                     }
+                    .coordinateSpace(name: resultsSpace)
                 }
             }
             .padding(16)
@@ -130,21 +156,17 @@ struct MainTranslationView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
+                // Standard toolbar buttons: the system draws the shared
+                // capsule, spacing and hover state, so both icons sit evenly.
                 Button(action: { showSettings = true }) {
-                    Image(systemName: "gearshape")
-                        .hoverToolbarIcon()
+                    Label("Settings", systemImage: "gearshape")
                 }
-                .buttonStyle(.plain)
                 .help("Settings")
-                .accessibilityLabel("Settings")
 
                 Button(action: { showHelp = true }) {
-                    Image(systemName: "questionmark.circle")
-                        .hoverToolbarIcon()
+                    Label("Help", systemImage: "questionmark")
                 }
-                .buttonStyle(.plain)
                 .help("Help")
-                .accessibilityLabel("Help")
             }
         }
         .onAppear {
@@ -398,6 +420,16 @@ struct MainTranslationView: View {
             )
         }
         return RichTextConverter.prepare(markdown: response)
+    }
+
+    /// Keep the resize cursor while the pointer is over the handle or a drag
+    /// is in progress, even if the pointer drifts off the handle mid-drag.
+    /// Push and pop stay paired so the cursor stack never leaks.
+    private func updateResizeCursor() {
+        let shouldShow = isHoveringResizeHandle || resizeStartFraction != nil
+        guard shouldShow != isResizeCursorShown else { return }
+        isResizeCursorShown = shouldShow
+        if shouldShow { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
     }
 
     private var primarySection: some View {

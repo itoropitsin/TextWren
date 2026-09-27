@@ -56,8 +56,16 @@ enum TinyAIPermissions {
     // also stores a per-version marker.
     private static var requestedThisProcess: Set<Permission> = []
 
+    /// The keyboard monitor's tap, kept for status checks.  macOS only
+    /// creates an active (non listen-only) tap for trusted processes, so a
+    /// live tap proves the grant even when `AXIsProcessTrusted` lags behind,
+    /// as it can after the app bundle is replaced or the grant is re-added.
+    static var activeEventTap: CFMachPort?
+
     static var accessibilityGranted: Bool {
-        AXIsProcessTrusted()
+        if AXIsProcessTrusted() { return true }
+        guard let tap = activeEventTap, CFMachPortIsValid(tap) else { return false }
+        return CGEvent.tapIsEnabled(tap: tap)
     }
 
     static var allGranted: Bool {
@@ -165,26 +173,6 @@ private struct HoverRowHighlightModifier: ViewModifier {
     }
 }
 
-private struct HoverToolbarIconModifier: ViewModifier {
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var isHovering: Bool = false
-
-    func body(content: Content) -> some View {
-        content
-            .frame(width: 28, height: 28)
-            .contentShape(Circle())
-            .background(
-                Circle()
-                    .fill(Color(NSColor.unemphasizedSelectedContentBackgroundColor))
-                    .opacity(isEnabled && isHovering ? 0.14 : 0)
-            )
-            .animation(.easeOut(duration: 0.12), value: isHovering)
-            .onHover { hovering in
-                isHovering = hovering
-            }
-    }
-}
-
 extension View {
     func hoverHighlight() -> some View {
         modifier(HoverHighlightModifier())
@@ -192,10 +180,6 @@ extension View {
 
     func hoverRowHighlight() -> some View {
         modifier(HoverRowHighlightModifier())
-    }
-
-    func hoverToolbarIcon() -> some View {
-        modifier(HoverToolbarIconModifier())
     }
 }
 
