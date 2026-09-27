@@ -4,6 +4,9 @@ TinyAI is a small macOS app for everyday writing. It translates, fixes grammar, 
 prompts on any text, either in its own window or right where you are typing.
 
 <p align="center">
+  <img src="docs/popup.png" alt="TinyAI popup over a web page: the selected text translated into Japanese with formatting kept, and a Grammar result, each with Replace" width="420">
+</p>
+<p align="center">
   <img src="docs/main-window.png" alt="TinyAI main window with source text, Translate and Grammar panels" width="720">
 </p>
 <p align="center">
