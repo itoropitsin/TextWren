@@ -46,7 +46,7 @@ struct HelpView: View {
                     }
 
                     HelpSection(title: "Voice dictation", systemImage: "mic.fill") {
-                        HelpBullet("Hold **⌥Space** and speak, or tap it to start and tap again to stop. **Esc** cancels. Change the shortcut in **Settings → Voice**.")
+                        HelpBullet("Hold the dictation shortcut (**⌃V** by default) and speak, or tap it to start and tap again to stop. **Esc** cancels. Change the shortcut in **Settings → Voice**.")
                         HelpBullet("The text is pasted where the cursor is. With no text field focused, it appears in the popup under the menu bar icon with **Copy**.")
                         HelpBullet("Choose a local model (audio stays on your Mac) or OpenAI in **Settings → Voice**. The menu bar icon keeps your last five transcripts.")
                     }

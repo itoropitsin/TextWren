@@ -483,30 +483,20 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
+                    Button("Open Settings") {
+                        NSWorkspace.shared.open(permission.systemSettingsURL)
+                    }
+                    .controlSize(.small)
+                    .help("Open System Settings → Privacy & Security → \(permission.title)")
                 }
                 .id("\(permission.rawValue)-\(permissionRefreshToken.uuidString)")
                 .padding(.vertical, 2)
             }
-
-            HStack(alignment: .top, spacing: 12) {
-                Color.clear
-                    .frame(width: settingsLabelColumnWidth, height: 1)
-                VStack(alignment: .leading, spacing: 6) {
-                    Button("Request permission") {
-                        _ = TinyAIPermissions.requestMissing(explicit: true)
-                        _ = keyboardMonitor.startMonitoringIfPermitted()
-                        permissionRefreshToken = UUID()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(TinyAIPermissions.allGranted)
-                    Text("If a request was previously declined, use this button to try again.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .frame(width: settingsControlColumnWidth, alignment: .leading)
-            }
         }
         .padding(.top, 8)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            permissionRefreshToken = UUID()
+        }
     }
 
     private var primaryActionsTab: some View {

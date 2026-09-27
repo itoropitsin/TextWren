@@ -217,7 +217,7 @@ nonisolated struct TranscriptionSettings: Codable, Equatable, Sendable {
     var language: String = ""
     /// Names and terms that help the recogniser (OpenAI prompt).
     var vocabulary: String = ""
-    var dictationHotkey: VoiceHotkey? = VoiceHotkey(keyCode: 49, modifiers: [.option]) // ⌥Space
+    var dictationHotkey: VoiceHotkey? = VoiceHotkey(keyCode: 9, modifiers: [.control]) // ⌃V
     var restoreClipboard: Bool = true
     var soundFeedback: Bool = true
 

@@ -41,7 +41,7 @@ struct VoiceSettingsTests {
     @Test func transcriptionDefaultsWhenDecodingEmptyObject() throws {
         let settings = try JSONDecoder().decode(TranscriptionSettings.self, from: Data("{}".utf8))
         #expect(settings == TranscriptionSettings())
-        #expect(settings.dictationHotkey == VoiceHotkey(keyCode: 49, modifiers: [.option]))
+        #expect(settings.dictationHotkey == VoiceHotkey(keyCode: 9, modifiers: [.control]))
         #expect(settings.engine == .openAI)
     }
 
@@ -155,6 +155,7 @@ struct VoiceHotkeyTests {
         #expect(KeyboardMonitor.voiceValidationError(for: KeyboardShortcut(keyCode: 49, modifiers: []), popupHotkey: popup, otherVoiceHotkeys: []) != nil)
         #expect(KeyboardMonitor.voiceValidationError(for: KeyboardShortcut(keyCode: 49, modifiers: [.shift]), popupHotkey: popup, otherVoiceHotkeys: []) != nil)
         #expect(KeyboardMonitor.voiceValidationError(for: KeyboardShortcut(keyCode: 49, modifiers: [.option]), popupHotkey: popup, otherVoiceHotkeys: []) == nil)
+        #expect(KeyboardMonitor.voiceValidationError(for: KeyboardShortcut(keyCode: 9, modifiers: [.control]), popupHotkey: popup, otherVoiceHotkeys: []) == nil)
     }
 
     @Test func voiceShortcutsAvoidReservedAndTakenKeys() {

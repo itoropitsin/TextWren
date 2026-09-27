@@ -36,8 +36,8 @@ enum TinyAIRuntime {
 }
 
 /// Permission checks are kept separate from the event monitor so the app can
-/// inspect status without displaying a system dialog. Only an explicit launch
-/// request or the Settings button may call the requesting methods.
+/// inspect status without displaying a system dialog. Only the bounded launch
+/// path calls the requesting methods; Settings opens each privacy pane directly.
 enum TinyAIPermissions {
     enum Permission: String, CaseIterable, Identifiable {
         case accessibility
@@ -51,11 +51,19 @@ enum TinyAIPermissions {
             case .inputMonitoring: return "Input Monitoring"
             }
         }
+
+        var systemSettingsURL: URL {
+            let section: String
+            switch self {
+            case .accessibility: section = "Privacy_Accessibility"
+            case .inputMonitoring: section = "Privacy_ListenEvent"
+            }
+            return URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(section)")!
+        }
     }
 
     // Keep permission prompts bounded within one process. The launch path
-    // also stores a per-version marker, while Settings can explicitly opt in
-    // to another request after the user has changed macOS permissions.
+    // also stores a per-version marker.
     private static var requestedThisProcess: Set<Permission> = []
 
     static var accessibilityGranted: Bool {
@@ -97,23 +105,17 @@ enum TinyAIPermissions {
         }
     }
 
-    /// Ask macOS for any currently missing permission. Normal launch calls
-    /// are limited to one request per process; Settings passes `explicit:
-    /// true` to deliberately retry after the user has changed access.
+    /// Ask macOS for any currently missing permission, at most once per
+    /// process. Settings opens the relevant privacy pane for later changes.
     @discardableResult
-    static func requestMissing(explicit: Bool = false) -> Bool {
+    static func requestMissing() -> Bool {
         guard !TinyAIRuntime.isTestEnvironment else { return allGranted }
 
-        let requestable: [Permission]
-        if explicit {
-            requestable = Permission.allCases.filter { !isGranted($0) }
-        } else {
-            requestable = requestablePermissions(
-                accessibilityGranted: accessibilityGranted,
-                inputMonitoringGranted: inputMonitoringGranted,
-                requested: requestedThisProcess
-            )
-        }
+        let requestable = requestablePermissions(
+            accessibilityGranted: accessibilityGranted,
+            inputMonitoringGranted: inputMonitoringGranted,
+            requested: requestedThisProcess
+        )
 
         if requestable.contains(.accessibility) {
             requestedThisProcess.insert(.accessibility)
