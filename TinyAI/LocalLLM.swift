@@ -281,6 +281,9 @@ nonisolated final class LocalLLMEngine: @unchecked Sendable {
             }
             try decode(&token, context: context)
         }
+        // Stopping inside the thinking block would return the thinking as
+        // the answer.
+        guard inAnswer else { throw LocalLLMError.engine("the model stopped before answering") }
         return Self.answer(from: String(decoding: output, as: UTF8.self))
     }
 

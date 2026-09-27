@@ -1,0 +1,66 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests and release build
+    # Xcode 27 image (public preview), the same Xcode the project is built with locally.
+    runs-on: xcode-27
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          sw_vers
+
+      # transcribe.cpp and llama.cpp frameworks are pinned and SHA-checked by
+      # the fetch scripts; cache them so each run does not download ~100 MB.
+      - name: Cache vendored frameworks
+        uses: actions/cache@v4
+        with:
+          path: Vendor
+          key: vendor-${{ hashFiles('scripts/fetch_transcribe_cpp.sh', 'scripts/fetch_llama_cpp.sh') }}
+
+      - name: Fetch vendored frameworks
+        run: |
+          scripts/fetch_transcribe_cpp.sh
+          scripts/fetch_llama_cpp.sh
+
+      # Tests that need downloaded speech or text models skip themselves.
+      # CI has no signing certificate, so the build is signed ad hoc.
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme TinyAI-UnitTests \
+            -destination 'platform=macOS' \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGNING_REQUIRED=NO \
+            DEVELOPMENT_TEAM=
+
+      # The installer script compiles with swiftc instead of Xcode; check that
+      # path too (it also verifies the version matches the Xcode project).
+      - name: Release build (build only)
+        run: scripts/build_and_install.sh --build-only
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TestResults
+          path: TestResults.xcresult
+          retention-days: 7

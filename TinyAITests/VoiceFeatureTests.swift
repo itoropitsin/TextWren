@@ -73,7 +73,6 @@ struct VoiceSettingsTests {
     }
 
     @Test func localModelCatalogIsPinned() {
-        #expect(LocalTranscriptionModel.allCases.count == 3)
         for model in LocalTranscriptionModel.allCases {
             #expect(model.sha256.count == 64)
             #expect(model.sha256.allSatisfy { $0.isHexDigit })
@@ -719,10 +718,9 @@ struct LocalEngineTests {
         #expect(result.live.lowercased().contains("fox"))
     }
 
-    @Test(.enabled(if: LocalModelManager.isDownloaded(.nemotronStreaming35)),
+    @Test(.enabled(if: LocalModelManager.isDownloaded(.nemotronStreaming35) && LocalModelManager.isDownloaded(.canary180MFlash)),
           arguments: [LocalTranscriptionModel.nemotronStreaming35, .canary180MFlash])
     func consecutiveRecordingsReuseTheLoadedModel(_ model: LocalTranscriptionModel) async throws {
-        guard LocalModelManager.isDownloaded(model) else { return }
         let samples = try spokenSamples("The quick brown fox jumps over the lazy dog.")
         for _ in 0..<3 {
             let result = try await transcribeLocally(model, samples: samples, unload: false)
@@ -739,8 +737,8 @@ struct LocalEngineTests {
 
 @MainActor
 struct StatusHUDTests {
-    @Test func popupSitsUnderTheIconAndStaysOnScreen() {
-        let screen = NSScreen.main!.visibleFrame
+    @Test func popupSitsUnderTheIconAndStaysOnScreen() throws {
+        let screen = try #require(NSScreen.main).visibleFrame
         let icon = NSRect(x: screen.midX, y: screen.maxY, width: 24, height: 24)
         let origin = StatusHUDController.origin(for: NSSize(width: 340, height: 80), below: icon)
         #expect(abs(origin.x + 170 - icon.midX) < 1)

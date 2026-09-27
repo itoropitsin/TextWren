@@ -41,11 +41,11 @@ project_build_settings="$(xcodebuild -project "$project_root/TinyAI.xcodeproj" -
 project_version="$(printf '%s\n' "$project_build_settings" | awk -F ' = ' '$1 ~ /MARKETING_VERSION/ {gsub(/[[:space:]]/, "", $2); print $2; exit}')"
 project_build_number="$(printf '%s\n' "$project_build_settings" | awk -F ' = ' '$1 ~ /CURRENT_PROJECT_VERSION/ {gsub(/[[:space:]]/, "", $2); print $2; exit}')"
 if [[ -z "$project_version" || -z "$project_build_number" ]]; then
-  echo "Не удалось прочитать версию TinyAI из настроек Xcode: $project_file." >&2
+  echo "Could not read the TinyAI version from the Xcode settings: $project_file." >&2
   exit 1
 fi
 if [[ "$project_version" != "$version" || "$project_build_number" != "$build_number" ]]; then
-  echo "Версия в установщике ($version/$build_number) не совпадает с Xcode ($project_version/$project_build_number)." >&2
+  echo "The installer version ($version/$build_number) does not match Xcode ($project_version/$project_build_number)." >&2
   exit 1
 fi
 identity_listing="$(security find-identity -v -p codesigning 2>/dev/null || true)"
@@ -90,8 +90,8 @@ if [[ -z "$signing_identity" ]]; then
 fi
 
 if [[ "$build_only" != "--build-only" && -z "$signing_identity" ]]; then
-  echo "Не найден действительный сертификат TinyAI Local Code Signing или Apple Development для команды $team_identifier."
-  echo "Установите сертификат с приватным ключом или используйте --build-only для неподписанной проверки."
+  echo "No valid TinyAI Local Code Signing or Apple Development certificate found for team $team_identifier."
+  echo "Install a certificate with its private key, or use --build-only for an unsigned check."
   exit 1
 fi
 
@@ -100,7 +100,7 @@ if [[ -n "$signing_identity" ]]; then
     if ! printf '%s\n' "$identity_listing" \
         | awk -F'"' -v sha="$local_identity_sha1" -v name="$local_identity_name" \
           '$1 ~ sha && $2 == name {found=1} END {exit(found ? 0 : 1)}'; then
-      echo "Локальный сертификат TinyAI не найден среди действительных identities."
+      echo "The local TinyAI certificate is not among the valid identities."
       exit 1
     fi
     signing_identity="$local_identity_sha1"
@@ -109,12 +109,12 @@ if [[ -n "$signing_identity" ]]; then
     if ! printf '%s\n' "$identity_listing" \
         | awk -F'"' -v identity="$signing_identity" \
           '$2 == identity && $2 ~ /^Apple Development:/ {found=1} END {exit(found ? 0 : 1)}'; then
-      echo "Сертификат '$signing_identity' не найден среди действительных Apple Development identities."
+      echo "Certificate '$signing_identity' is not among the valid Apple Development identities."
       exit 1
     fi
     detected_team_identifier="$(identity_team_id "$signing_identity")"
     if [[ "$detected_team_identifier" != "$team_identifier" ]]; then
-      echo "Сертификат '$signing_identity' принадлежит команде '${detected_team_identifier:-неизвестная}', ожидалась '$team_identifier'."
+      echo "Certificate '$signing_identity' belongs to team '${detected_team_identifier:-unknown}', expected '$team_identifier'."
       exit 1
     fi
     signing_mode="apple_development"
@@ -129,7 +129,7 @@ verify_signature() {
   codesign --verify --deep --strict "$bundle" || return 1
   details="$(codesign -dv --verbose=4 "$bundle" 2>&1)" || return 1
   if [[ "$details" == *"Signature=adhoc"* ]]; then
-    echo "Сборка подписана ad-hoc, установка запрещена: $bundle" >&2
+    echo "The build is ad-hoc signed; installing it is not allowed: $bundle" >&2
     return 1
   fi
   if [[ "$signing_mode" == "local" ]]; then
@@ -137,12 +137,12 @@ verify_signature() {
     codesign -v -R="identifier \"IT.TinyAI\" and certificate leaf = H\"$local_identity_sha1\"" "$bundle" || return 1
     requirement="$(codesign -d -r- "$bundle" 2>&1)" || return 1
     if [[ "$requirement" == *"cdhash"* ]]; then
-      echo "Требование подписи привязано к хешу конкретной сборки: $bundle" >&2
+      echo "The signing requirement is tied to the hash of one build: $bundle" >&2
       return 1
     fi
     entitlements="$(codesign -d --entitlements :- "$bundle" 2>/dev/null)" || return 1
     if [[ "$entitlements" != *"com.apple.security.cs.disable-library-validation"* ]]; then
-      echo "Локальная сборка не может загрузить CTranscribe и llama без исключения Library Validation: $bundle" >&2
+      echo "A local build cannot load CTranscribe and llama without the Library Validation exception: $bundle" >&2
       return 1
     fi
   else
@@ -161,7 +161,7 @@ ditto "$transcribe_framework_dir/CTranscribe.framework" "$app_bundle/Contents/Fr
 llama_framework_dir="$project_root/Vendor/llama.xcframework/macos-arm64_x86_64"
 ditto "$llama_framework_dir/llama.framework" "$app_bundle/Contents/Frameworks/llama.framework"
 
-echo "Собираю TinyAI $version ($build_number)…"
+echo "Building TinyAI $version ($build_number)…"
 swiftc \
   -target arm64-apple-macosx14.6 \
   -sdk "$sdk_path" \
@@ -212,7 +212,7 @@ cp "$project_root/TinyAI/Info.plist" "$app_bundle/Contents/Info.plist"
 printf 'APPL????' > "$app_bundle/Contents/PkgInfo"
 
 if [[ -n "$signing_identity" ]]; then
-  echo "Подписываю сертификатом: $signing_identity"
+  echo "Signing with certificate: $signing_identity"
   # The embedded frameworks arrive ad-hoc signed, so sign them before the app.
   # A local certificate has no Apple Team ID. The main executable therefore
   # needs the narrow Library Validation exception to load these frameworks.
@@ -228,10 +228,10 @@ if [[ -n "$signing_identity" ]]; then
     --entitlements "$signing_entitlements" \
     "$app_bundle"
 else
-  echo "Подпись пропущена: режим --build-only."
+  echo "Signing skipped: --build-only mode."
 fi
 
-echo "Проверяю собранное приложение…"
+echo "Checking the built app…"
 test -x "$app_bundle/Contents/MacOS/TinyAI"
 test -f "$app_bundle/Contents/Frameworks/CTranscribe.framework/Versions/A/CTranscribe"
 test -f "$app_bundle/Contents/Frameworks/llama.framework/Versions/A/llama"
@@ -248,7 +248,7 @@ if [[ -n "$signing_identity" ]]; then
 fi
 
 if [[ "$build_only" == "--build-only" ]]; then
-  echo "Сборка и проверка завершены; установка пропущена."
+  echo "Build and checks finished; install skipped."
   exit 0
 fi
 
@@ -275,15 +275,15 @@ if [[ -d /Applications/TinyAI.app ]]; then
   installed_version_before="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/TinyAI.app/Contents/Info.plist 2>/dev/null || true)"
   installed_build_before="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' /Applications/TinyAI.app/Contents/Info.plist 2>/dev/null || true)"
   if [[ -z "$installed_version_before" || -z "$installed_build_before" ]]; then
-    echo "Не удалось определить версию уже установленного TinyAI; замена отменена." >&2
+    echo "Could not read the version of the installed TinyAI; replacement cancelled." >&2
     exit 1
   fi
   release_comparison="$(compare_releases "$version" "$build_number" "$installed_version_before" "$installed_build_before")" || {
-    echo "Некорректная версия уже установленного TinyAI ($installed_version_before/$installed_build_before); замена отменена." >&2
+    echo "The installed TinyAI has an invalid version ($installed_version_before/$installed_build_before); replacement cancelled." >&2
     exit 1
   }
   if [[ "$release_comparison" -le 0 ]]; then
-    echo "Установка отменена: TinyAI $installed_version_before ($installed_build_before) уже установлен или новее." >&2
+    echo "Install cancelled: TinyAI $installed_version_before ($installed_build_before) is already installed or newer." >&2
     exit 1
   fi
 fi
@@ -304,7 +304,7 @@ wait_for_tinyai_exit() {
 }
 
 if pgrep -x TinyAI >/dev/null 2>&1; then
-  echo "Завершаю запущенный TinyAI перед заменой…"
+  echo "Quitting the running TinyAI before replacing it…"
   osascript -e 'tell application "TinyAI" to quit' >/dev/null 2>&1 || true
   if ! wait_for_tinyai_exit 8; then
     # A menu-bar app can ignore the Apple event while its Settings window is
@@ -313,13 +313,13 @@ if pgrep -x TinyAI >/dev/null 2>&1; then
     running_pid="$(pgrep -x TinyAI | head -n 1)"
     running_executable="$(lsof -p "$running_pid" -a -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
     if [[ "$running_executable" != "/Applications/TinyAI.app/Contents/MacOS/TinyAI" ]]; then
-      echo "Неизвестный процесс TinyAI ($running_pid); текущая установка сохранена." >&2
+      echo "Unknown TinyAI process ($running_pid); the current install is kept." >&2
       exit 1
     fi
-    echo "Отправляю TinyAI SIGTERM…"
+    echo "Sending TinyAI SIGTERM…"
     kill -TERM "$running_pid"
     if ! wait_for_tinyai_exit 5; then
-      echo "TinyAI не завершился вовремя; текущая установка сохранена." >&2
+      echo "TinyAI did not quit in time; the current install is kept." >&2
       exit 1
     fi
   fi
@@ -331,13 +331,13 @@ if [[ -d /Applications/TinyAI.app ]]; then
   # an existing app would leave stale sealed resources behind and invalidate
   # the new code signature.
   mv /Applications/TinyAI.app "$backup_root/TinyAI.app"
-  echo "Резервная копия предыдущей версии: $backup_root/TinyAI.app"
+  echo "Backup of the previous version: $backup_root/TinyAI.app"
 fi
 
 if ! mv "$install_stage_app" /Applications/TinyAI.app; then
   if [[ -n "$backup_root" && -d "$backup_root/TinyAI.app" && ! -e /Applications/TinyAI.app ]]; then
     mv "$backup_root/TinyAI.app" /Applications/TinyAI.app
-    echo "Не удалось заменить приложение; резервная копия восстановлена." >&2
+    echo "Could not replace the app; the backup was restored." >&2
   fi
   exit 1
 fi
@@ -352,7 +352,7 @@ validate_installed_app() {
   test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' /Applications/TinyAI.app/Contents/Info.plist)" = "AppIcon" || return 1
 }
 if ! validate_installed_app; then
-  echo "Новая установка не прошла проверку; восстанавливаю предыдущую версию." >&2
+  echo "The new install failed its check; restoring the previous version." >&2
   mv /Applications/TinyAI.app "$install_stage_root/TinyAI.failed.app"
   if [[ -n "$backup_root" && -d "$backup_root/TinyAI.app" ]]; then
     mv "$backup_root/TinyAI.app" /Applications/TinyAI.app
@@ -360,10 +360,10 @@ if ! validate_installed_app; then
   exit 1
 fi
 
-echo "Установлено: /Applications/TinyAI.app"
+echo "Installed: /Applications/TinyAI.app"
 installed_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/TinyAI.app/Contents/Info.plist)"
 installed_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' /Applications/TinyAI.app/Contents/Info.plist)"
-echo "Версия: $installed_version ($installed_build)"
+echo "Version: $installed_version ($installed_build)"
 open -a /Applications/TinyAI.app
 
 wait_for_tinyai_start() {
@@ -386,12 +386,12 @@ restore_previous_install() {
     mv /Applications/TinyAI.app "$install_stage_root/TinyAI.failed.app" || return 1
   fi
   mv "$backup_root/TinyAI.app" /Applications/TinyAI.app || return 1
-  echo "Предыдущая версия TinyAI восстановлена: /Applications/TinyAI.app" >&2
+  echo "The previous TinyAI version was restored: /Applications/TinyAI.app" >&2
   open -a /Applications/TinyAI.app || true
 }
 
 if ! wait_for_tinyai_start 8; then
-  echo "Новая сборка не запустилась; восстанавливаю предыдущую версию." >&2
+  echo "The new build did not start; restoring the previous version." >&2
   restore_previous_install
   exit 1
 fi
@@ -399,17 +399,17 @@ fi
 tinyai_pid="$(pgrep -x TinyAI | head -n 1)"
 sleep 3
 if ! kill -0 "$tinyai_pid" 2>/dev/null; then
-  echo "TinyAI завершился сразу после запуска; восстанавливаю предыдущую версию." >&2
+  echo "TinyAI quit right after launch; restoring the previous version." >&2
   restore_previous_install
   exit 1
 fi
 tinyai_executable="$(lsof -p "$tinyai_pid" -a -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
 if [[ "$tinyai_executable" != "/Applications/TinyAI.app/Contents/MacOS/TinyAI" ]]; then
-  echo "Запущен не новый пакет TinyAI: ${tinyai_executable:-путь не определён}. Восстанавливаю предыдущую версию." >&2
+  echo "The running TinyAI is not the new bundle: ${tinyai_executable:-unknown path}. Restoring the previous version." >&2
   restore_previous_install
   exit 1
 fi
-echo "Активный процесс: PID $tinyai_pid, $tinyai_executable"
+echo "Running process: PID $tinyai_pid, $tinyai_executable"
 if [[ -n "$backup_root" && -d "$backup_root" ]]; then
   # Keep the previous version until the newly signed app has launched from
   # /Applications; a startup failure then leaves a recoverable copy.

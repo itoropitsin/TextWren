@@ -20,11 +20,11 @@ fi
 download_root="$(mktemp -d /tmp/TinyAI-transcribe.XXXXXX)"
 trap 'rm -rf -- "$download_root"' EXIT
 
-echo "Загружаю transcribe.cpp $release…"
+echo "Downloading transcribe.cpp $release…"
 curl --fail --location --silent --show-error -o "$download_root/xcframework.zip" "$archive_url"
 actual_sha256="$(shasum -a 256 "$download_root/xcframework.zip" | awk '{print $1}')"
 if [[ "$actual_sha256" != "$archive_sha256" ]]; then
-  echo "Контрольная сумма transcribe.cpp не совпала: $actual_sha256" >&2
+  echo "transcribe.cpp checksum mismatch: $actual_sha256" >&2
   exit 1
 fi
 
