@@ -180,8 +180,16 @@ tasks. Settings that refer to a model that is no longer supported switch to the 
 **Qwen3.5 4B** runs on this Mac with llama.cpp, needs no API key, and the text never leaves the
 device. Download it in Settings → API, then pick it for translation or any action. In a blind
 comparison with GPT-6 Luna (Low) it scored 4.7 vs 4.8 of 5 for grammar but 3.8 vs 4.9 for
-translation. Reasoning is Off by default (it scored best); Low, Medium and High turn thinking on
-with a growing budget and are much slower. The model loads on first use and is freed after five
+translation. Reasoning is Off by default (it scored best). Low, Medium and High turn thinking on
+with a growing budget and are much slower. Typical wait for a sentence or two on Apple Silicon:
+
+| Reasoning | Wait |
+| --- | --- |
+| Off | 1.5–2.5 s |
+| Low | about 30 s |
+| Medium | about 2 min |
+| High | about 6 min |
+ The model loads on first use and is freed after five
 idle minutes.
 
 Model output has em dashes (—) replaced with hyphens (-); code is left unchanged.

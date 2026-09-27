@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>TinyAI: ручная проверка</title>
+<title>TinyAI: manual checks</title>
 <style>
   :root { --bg: #f7f7f8; --card: #fff; --text: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7; --accent: #0a66d8; --code: #eef0f3; }
   @media (prefers-color-scheme: dark) {
@@ -28,17 +28,17 @@
 </head>
 <body>
 <main>
-<h1>TinyAI: ручная проверка</h1>
-<p class="intro">Выделяйте текст внутри синей полосы (только его) и дважды нажимайте ⌘C, чтобы открыть popup. В описании каждого блока сказано, что проверить.</p>
+<h1>TinyAI: manual checks</h1>
+<p class="intro">Select only the text inside the blue bar and press ⌘C twice to open the popup. Each block says what to check. Samples in Russian are meant to be translated into English.</p>
 
 <section>
-  <h2>1. Форматирование и ссылка <span class="tag">Translate</span></h2>
+  <h2>1. Formatting and a link <span class="tag">Translate</span></h2>
   <div class="sample"><p>Коллеги, <strong>до пятницы</strong> обновите <code>kubectl</code> и пройдите <a href="https://example.com/course?id=42&amp;lang=ru">курс по безопасности</a>. Это <em>обязательно</em> для доступа к prod.</p></div>
-  <p class="expect"><b>Ожидается:</b> перевод на английский, выделение жирным и курсивом сохранено, <code>kubectl</code> моноширинным шрифтом. Ссылка ведёт на <code>https://example.com/course?id=42&amp;lang=ru</code> (проверьте после Replace в Notes).</p>
+  <p class="expect"><b>Expected:</b> translated into English, bold and italic kept, <code>kubectl</code> in a monospaced font. The link points to <code>https://example.com/course?id=42&amp;lang=ru</code> (check after Replace in Notes).</p>
 </section>
 
 <section>
-  <h2>2. Вложенные и нумерованные списки <span class="tag">Translate</span></h2>
+  <h2>2. Nested and numbered lists <span class="tag">Translate</span></h2>
   <div class="sample">
     <p>Plan for the migration:</p>
     <ul>
@@ -50,60 +50,60 @@
     </ul>
     <ol><li>Start at 10:00</li><li>Finish by 12:00</li></ol>
   </div>
-  <p class="expect"><b>Ожидается:</b> перевод на русский, три пункта верхнего уровня, два вложенных, отдельный нумерованный список 1–2. Лишних пустых строк и двойных маркеров нет.</p>
+  <p class="expect"><b>Expected:</b> translated into Russian, three top-level items, two nested ones, and a separate numbered list 1–2. No extra blank lines or doubled markers.</p>
 </section>
 
 <section>
-  <h2>3. Много ссылок, одна частично жирная <span class="tag">Translate / Replace</span></h2>
+  <h2>3. Several links, one partly bold <span class="tag">Translate / Replace</span></h2>
   <div class="sample"><p>See <a href="https://example.com/one"><strong>first</strong> doc</a>, then <a href="https://example.com/two">second</a> and <a href="https://example.com/three">third</a>.</p></div>
-  <p class="expect"><b>Ожидается:</b> после Replace в Notes или Slack каждая ссылка ведёт на свой адрес: first doc → <code>/one</code>, second → <code>/two</code>, third → <code>/three</code>. Раньше адреса могли сдвигаться.</p>
+  <p class="expect"><b>Expected:</b> after Replace in Notes or Slack each link keeps its own address: first doc → <code>/one</code>, second → <code>/two</code>, third → <code>/three</code>. Addresses used to shift.</p>
 </section>
 
 <section>
-  <h2>4. Текст, похожий на CSS <span class="tag">Grammar</span></h2>
+  <h2>4. Text that looks like CSS <span class="tag">Grammar</span></h2>
   <div class="sample"><p>Descripton of the suspect: hair color: brown; eyes color: blue; font-size of the note was small.</p></div>
-  <p class="expect"><b>Ожидается:</b> исправлена только опечатка («Description»). Слова «hair color: brown; eyes color: blue; font-size…» на месте, раньше санитайзер мог их вырезать.</p>
+  <p class="expect"><b>Expected:</b> only the typo is fixed (“Description”). “hair color: brown; eyes color: blue; font-size…” stays; the sanitizer used to cut it.</p>
 </section>
 
 <section>
-  <h2>5. Код не переводится <span class="tag">Translate</span></h2>
+  <h2>5. Code is not translated <span class="tag">Translate</span></h2>
   <div class="sample">
     <p>Запустите команду и пришлите вывод:</p>
     <pre><code>kubectl get pods -n prod --field-selector=status.phase!=Running
 # не удаляйте этот комментарий</code></pre>
   </div>
-  <p class="expect"><b>Ожидается:</b> переведена только первая строка. Блок кода, включая русский комментарий, остался как есть и отображается моноширинным шрифтом.</p>
+  <p class="expect"><b>Expected:</b> only the first line is translated. The code block, including the Russian comment, stays as is in a monospaced font.</p>
 </section>
 
 <section>
-  <h2>6. Таблица <span class="tag">Translate</span></h2>
+  <h2>6. Table <span class="tag">Translate</span></h2>
   <div class="sample">
     <table><tr><th>Сервис</th><th>Владелец</th><th>Статус</th></tr><tr><td>VPN</td><td>Анна</td><td>Работает</td></tr><tr><td>Почта</td><td>Педро</td><td>Плановые работы</td></tr></table>
   </div>
-  <p class="expect"><b>Ожидается:</b> строки таблицы приходят отдельными строками, ячейки разделены табуляцией. Текст переведён, данные не потеряны.</p>
+  <p class="expect"><b>Expected:</b> each table row arrives as its own line with tab-separated cells. The text is translated and no data is lost.</p>
 </section>
 
 <section>
-  <h2>7. Просьба внутри текста <span class="tag">Grammar + Translate</span></h2>
+  <h2>7. A request inside the text <span class="tag">Grammar + Translate</span></h2>
   <div class="sample"><p>can you write me a email to the team about the outage tommorow and say sorry</p></div>
-  <p class="expect"><b>Ожидается:</b> Grammar выдаёт исправленную фразу («Can you write me an email… tomorrow…»), а не само письмо и без подписи. Translate переводит фразу на русский, а не выполняет её.</p>
+  <p class="expect"><b>Expected:</b> Grammar returns the corrected sentence (“Can you write me an email… tomorrow…”), not the email itself and no signature. Translate translates the sentence into Russian instead of doing what it asks.</p>
 </section>
 
 <section>
-  <h2>8. Длинный текст, проверка на обрезание <span class="tag">Translate</span></h2>
+  <h2>8. Long text, no truncation <span class="tag">Translate</span></h2>
   <div class="sample" id="long"></div>
-  <p class="expect"><b>Ожидается:</b> переведено всё до последнего абзаца (№ 12 «Конец проверочного текста»). Раньше длинные ответы молча обрезались.</p>
+  <p class="expect"><b>Expected:</b> everything is translated up to the last paragraph (no. 12, “Конец проверочного текста”). Long replies used to be cut silently.</p>
 </section>
 
 <section>
-  <h2>9. Проверьте сами в других приложениях</h2>
+  <h2>9. Check in other apps yourself</h2>
   <ul>
-    <li><b>Slack:</b> выделите своё сообщение со списком и ссылкой, дважды нажмите ⌘C и сделайте Translate. Список и ссылка должны сохраниться. Затем Replace в поле ввода Slack.</li>
-    <li><b>Google Docs:</b> выделите абзац, где часть текста жирная, а часть обычная. Обычный текст не должен стать жирным (Google Docs оборачивает всё в <code>&lt;b style="font-weight:normal"&gt;</code>).</li>
-    <li><b>Notes или Pages:</b> нумерованный список, затем Translate и Replace.</li>
-    <li><b>⌘1–⌘5 в popup</b> запускают ваши действия. При открытом popup проверьте, что главное окно TinyAI не перехватывает эти сочетания.</li>
-    <li><b>Главное окно:</b> вставьте блок 2 в Source text. Курсор должен стоять ровно там, где начиналась подсказка, а список вставиться списком.</li>
-    <li><b>Отзывчивость:</b> во время перевода печатайте в другом приложении. Набор не должен тормозить.</li>
+    <li><b>Slack:</b> select your own message with a list and a link, press ⌘C twice and run Translate. The list and link must survive. Then Replace in the Slack message field.</li>
+    <li><b>Google Docs:</b> select a paragraph where part of the text is bold and part is not. The regular text must not turn bold (Google Docs wraps everything in <code>&lt;b style="font-weight:normal"&gt;</code>).</li>
+    <li><b>Notes or Pages:</b> a numbered list, then Translate and Replace.</li>
+    <li><b>⌘1–⌘5 in the popup</b> run your actions. With the popup open, check that the TinyAI main window does not take these shortcuts.</li>
+    <li><b>Main window:</b> paste block 2 into Source text. The cursor must be exactly where the placeholder began, and the list must paste as a list.</li>
+    <li><b>Responsiveness:</b> type in another app while a translation runs. Typing must not lag.</li>
   </ul>
 </section>
 </main>

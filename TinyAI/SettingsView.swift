@@ -1046,12 +1046,14 @@ private struct ReasoningEffortPicker: View {
 
 private extension ReasoningEffort {
     /// Local models only switch thinking on or off; the levels are budgets.
+    /// Times are measured on Apple Silicon for a sentence or two
+    /// (about 35 tokens per second while thinking).
     var localThinkingName: String {
         switch self {
-        case .none, .minimal: return "Off"
-        case .low: return "Low (short thinking)"
-        case .medium: return "Medium"
-        case .high, .xhigh, .max: return "High (slow)"
+        case .none, .minimal: return "Off · about 2 s"
+        case .low: return "Low · about 30 s"
+        case .medium: return "Medium · about 2 min"
+        case .high, .xhigh, .max: return "High · about 6 min"
         }
     }
 }
