@@ -43,6 +43,7 @@ struct VoiceSettingsTests {
         #expect(settings == TranscriptionSettings())
         #expect(settings.dictationHotkey == VoiceHotkey(keyCode: 9, modifiers: [.control]))
         #expect(settings.engine == .openAI)
+        #expect(settings.openAIModel == "gpt-live-transcribe")
     }
 
     @Test func clearedDictationHotkeyStaysCleared() throws {
@@ -81,6 +82,7 @@ struct VoiceSettingsTests {
                     == "https://huggingface.co/\(model.repository)/resolve/\(model.revision)/\(model.filename)")
             #expect(model.downloadURLs.count == 2)
             #expect(model.filename.hasSuffix(".gguf"))
+            #expect(model.modelCardURL.absoluteString == "https://huggingface.co/\(model.repository)")
         }
         #expect(LocalTranscriptionModel.voxtralMini4BRealtime.languages.contains("ru"))
         #expect(LocalTranscriptionModel.nemotronStreaming35.languages.contains("ru"))
@@ -89,8 +91,22 @@ struct VoiceSettingsTests {
     }
 
     @Test func unknownOpenAIModelFallsBackToDefault() {
-        #expect(OpenAITranscriptionModel.resolve("whisper-0").id == "gpt-transcribe")
+        #expect(OpenAITranscriptionModel.all.map(\.id) == ["gpt-live-transcribe", "gpt-transcribe"])
+        #expect(OpenAITranscriptionModel.resolve("whisper-0").id == "gpt-live-transcribe")
         #expect(OpenAITranscriptionModel.resolve("gpt-live-transcribe").mode == .realtime)
+    }
+
+    @Test func existingTranscriptionChoiceIsPreserved() throws {
+        let settings = try JSONDecoder().decode(TranscriptionSettings.self,
+                                                from: Data(#"{"openAIModel":"gpt-transcribe"}"#.utf8))
+        #expect(settings.openAIModel == "gpt-transcribe")
+    }
+
+    @Test func nemotronOnboardingOnlyWhenNoVoiceEngineIsAvailable() {
+        #expect(VoiceOnboarding.shouldOfferNemotron(hasOpenAIKey: false, hasDownloadedModel: false, alreadyPrompted: false))
+        #expect(!VoiceOnboarding.shouldOfferNemotron(hasOpenAIKey: true, hasDownloadedModel: false, alreadyPrompted: false))
+        #expect(!VoiceOnboarding.shouldOfferNemotron(hasOpenAIKey: false, hasDownloadedModel: true, alreadyPrompted: false))
+        #expect(!VoiceOnboarding.shouldOfferNemotron(hasOpenAIKey: false, hasDownloadedModel: false, alreadyPrompted: true))
     }
 
     @Test func storePersistsAndCleansUp() {

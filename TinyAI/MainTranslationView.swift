@@ -16,7 +16,9 @@ struct MainTranslationView: View {
     @State private var primaryPreparedOutput: PreparedRichText?
     @State private var secondaryPreparedOutput: PreparedRichText?
     @State private var showSettings: Bool = false
+    @State private var openVoiceTabOnNextSettings: Bool = false
     @State private var showHelp: Bool = false
+    @State private var showNemotronOnboarding: Bool = false
     @State private var processingTask: DispatchWorkItem?
     @State private var isPrimaryLoading: Bool = false
     @State private var isSecondaryLoading: Bool = false
@@ -27,6 +29,8 @@ struct MainTranslationView: View {
     @State private var secondaryRunningActionId: UUID?
     @State private var primaryTitle: String = "Starred 1"
     @State private var secondaryTitle: String = "Starred 2"
+    @State private var primaryResultFraction: CGFloat = 0.5
+    @State private var resizeStartFraction: CGFloat?
 
     let languages = [TranslationService.languageAutoSelection] + TranslationService.supportedLanguages
 
@@ -76,13 +80,49 @@ struct MainTranslationView: View {
 
             // Right panel - results
             VStack(alignment: .leading, spacing: 12) {
-                VSplitView {
-                    primarySection
-                        .frame(minHeight: 0, maxHeight: .infinity)
-                        .layoutPriority(1)
-                    secondarySection
-                        .frame(minHeight: 0, maxHeight: .infinity)
-                        .layoutPriority(1)
+                GeometryReader { geometry in
+                    let dividerHeight: CGFloat = 8
+                    let availableHeight = max(geometry.size.height - dividerHeight, 0)
+                    let minimumSectionHeight = min(120, availableHeight / 2)
+                    let primaryHeight = min(
+                        max(availableHeight * primaryResultFraction, minimumSectionHeight),
+                        availableHeight - minimumSectionHeight
+                    )
+
+                    VStack(spacing: 0) {
+                        primarySection.frame(height: primaryHeight)
+
+                        Color.clear
+                            .frame(height: dividerHeight)
+                            .contentShape(Rectangle())
+                            .onHover { hovering in
+                                if hovering { NSCursor.resizeUpDown.push() }
+                                else { NSCursor.pop() }
+                            }
+                            .gesture(DragGesture(minimumDistance: 0)
+                                .onChanged { drag in
+                                    guard availableHeight > 0 else { return }
+                                    if resizeStartFraction == nil {
+                                        resizeStartFraction = primaryResultFraction
+                                    }
+                                    let minimumFraction = minimumSectionHeight / availableHeight
+                                    let requestedFraction = (resizeStartFraction ?? primaryResultFraction)
+                                        + drag.translation.height / availableHeight
+                                    primaryResultFraction = min(max(requestedFraction, minimumFraction), 1 - minimumFraction)
+                                }
+                                .onEnded { _ in resizeStartFraction = nil })
+                            .accessibilityElement()
+                            .accessibilityLabel("Resize result panels")
+                            .accessibilityAdjustableAction { direction in
+                                switch direction {
+                                case .increment: primaryResultFraction = min(primaryResultFraction + 0.05, 0.95)
+                                case .decrement: primaryResultFraction = max(primaryResultFraction - 0.05, 0.05)
+                                @unknown default: break
+                                }
+                            }
+
+                        secondarySection.frame(height: availableHeight - primaryHeight)
+                    }
                 }
             }
             .padding(16)
@@ -109,6 +149,7 @@ struct MainTranslationView: View {
         }
         .onAppear {
             refreshTitles()
+            offerLocalDictationIfNeeded()
         }
         .onChange(of: translationService.preferredTargetLanguage) { _, _ in
             guard translationService.isStarredPrimaryBuiltInTranslate else { return }
@@ -137,11 +178,14 @@ struct MainTranslationView: View {
             }
         }
         .sheet(isPresented: $showSettings) {
-            SettingsView()
+            SettingsView(openVoiceTab: openVoiceTabOnNextSettings)
                 .environmentObject(translationService)
                 .environmentObject(voiceStore)
                 .environmentObject(voiceCoordinator)
                 .environmentObject(localModelManager)
+        }
+        .onChange(of: showSettings) { _, isPresented in
+            if !isPresented { openVoiceTabOnNextSettings = false }
         }
         .onReceive(NotificationCenter.default.publisher(for: .tinyAIOpenSettings)) { _ in
             showSettings = true
@@ -149,6 +193,22 @@ struct MainTranslationView: View {
         .sheet(isPresented: $showHelp) {
             HelpView()
                 .environmentObject(voiceStore)
+        }
+        .alert("Set up local dictation?", isPresented: $showNemotronOnboarding) {
+            Button("Download Nemotron (751 MB)") {
+                var configuration = voiceStore.configuration
+                configuration.transcription.engine = .local
+                configuration.transcription.localModel = .nemotronStreaming35
+                voiceStore.save(configuration)
+                localModelManager.download(.nemotronStreaming35)
+                DispatchQueue.main.async {
+                    openVoiceTabOnNextSettings = true
+                    showSettings = true
+                }
+            }
+            Button("Later", role: .cancel) {}
+        } message: {
+            Text("No OpenAI API key or local speech model is available for dictation. Download Nemotron Streaming 3.5 to transcribe on this Mac without an API key. You can watch the download in Settings → Voice.")
         }
         .alert("Error", isPresented: Binding(
             get: { translationService.errorMessage != nil },
@@ -164,6 +224,22 @@ struct MainTranslationView: View {
             .hoverHighlight()
         } message: {
             Text(translationService.errorMessage ?? "")
+        }
+    }
+
+    private func offerLocalDictationIfNeeded() {
+        guard !TinyAIRuntime.isTestEnvironment else { return }
+        let defaults = TinyAIRuntime.userDefaults
+        let hasDownloadedModel = LocalTranscriptionModel.allCases.contains(where: LocalModelManager.isDownloaded)
+        guard VoiceOnboarding.shouldOfferNemotron(
+            hasOpenAIKey: translationService.hasAPIKey(for: .openAI),
+            hasDownloadedModel: hasDownloadedModel,
+            alreadyPrompted: defaults.bool(forKey: VoiceOnboarding.nemotronPromptedKey)
+        ) else { return }
+
+        defaults.set(true, forKey: VoiceOnboarding.nemotronPromptedKey)
+        DispatchQueue.main.async {
+            showNemotronOnboarding = true
         }
     }
 
