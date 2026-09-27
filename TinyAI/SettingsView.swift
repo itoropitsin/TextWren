@@ -905,8 +905,7 @@ struct KeyboardShortcutRecorder: View {
         .buttonStyle(.plain)
         .hoverHighlight()
         .background(
-            KeyCaptureViewRepresentable(isRecording: $isRecording) { keyCode, modifiers in
-                let candidate = KeyboardShortcut(keyCode: Int64(keyCode), modifiers: modifiers)
+            KeyCaptureViewRepresentable(isRecording: $isRecording) { candidate in
                 onCaptured(candidate)
             }
             .frame(width: 0, height: 0)
@@ -970,12 +969,12 @@ struct InsetTextEditor: NSViewRepresentable {
 
 private struct KeyCaptureViewRepresentable: NSViewRepresentable {
     @Binding var isRecording: Bool
-    let onCapture: (UInt16, ShortcutModifiers) -> Void
+    let onCapture: (KeyboardShortcut) -> Void
 
     func makeNSView(context: Context) -> KeyCaptureView {
         let view = KeyCaptureView()
-        view.onCapture = { keyCode, modifiers in
-            onCapture(keyCode, modifiers)
+        view.onCapture = { shortcut in
+            onCapture(shortcut)
             DispatchQueue.main.async {
                 isRecording = false
             }
@@ -999,11 +998,35 @@ private struct KeyCaptureViewRepresentable: NSViewRepresentable {
 }
 
 private final class KeyCaptureView: NSView {
-    var onCapture: ((UInt16, ShortcutModifiers) -> Void)?
+    var onCapture: ((KeyboardShortcut) -> Void)?
     var onCancel: (() -> Void)?
-    var isRecording: Bool = false
+    var isRecording: Bool = false {
+        didSet { peakModifiers = [] }
+    }
+    /// Every modifier held together since the last key or full release, so
+    /// releasing fn and ⌃ one after the other still records fn⌃.
+    private var peakModifiers: ShortcutModifiers = []
 
     override var acceptsFirstResponder: Bool { true }
+
+    override func flagsChanged(with event: NSEvent) {
+        guard isRecording else {
+            super.flagsChanged(with: event)
+            return
+        }
+        let held = ShortcutModifiers(modifierFlags: event.modifierFlags, includingFunction: true)
+        if held.isEmpty {
+            let captured = peakModifiers
+            peakModifiers = []
+            // A single modifier is too easy to press by accident; the
+            // validators explain the rule when two or more are held.
+            if captured.count >= 2 {
+                onCapture?(.modifierOnly(captured))
+            }
+        } else {
+            peakModifiers.formUnion(held)
+        }
+    }
 
     override func keyDown(with event: NSEvent) {
         guard isRecording else {
@@ -1026,8 +1049,9 @@ private final class KeyCaptureView: NSView {
             return
         }
 
+        peakModifiers = []
         let modifiers = ShortcutModifiers(modifierFlags: event.modifierFlags)
-        onCapture?(event.keyCode, modifiers)
+        onCapture?(KeyboardShortcut(keyCode: Int64(event.keyCode), modifiers: modifiers))
     }
 }
 

@@ -27,28 +27,37 @@ nonisolated struct ShortcutModifiers: OptionSet, Equatable, Sendable {
     static let shift = ShortcutModifiers(rawValue: 1 << 1)
     static let option = ShortcutModifiers(rawValue: 1 << 2)
     static let control = ShortcutModifiers(rawValue: 1 << 3)
+    /// Fn (🌐).  Only modifier-only shortcuts use it: macOS also sets the Fn
+    /// flag on arrow and function keys, so the initializers below leave it
+    /// out unless asked to include it.
+    static let function = ShortcutModifiers(rawValue: 1 << 4)
 
     init(rawValue: Int) {
         self.rawValue = rawValue
     }
 
-    init(eventFlags: CGEventFlags) {
+    init(eventFlags: CGEventFlags, includingFunction: Bool = false) {
         var result: ShortcutModifiers = []
         if eventFlags.contains(.maskCommand) { result.insert(.command) }
         if eventFlags.contains(.maskShift) { result.insert(.shift) }
         if eventFlags.contains(.maskAlternate) { result.insert(.option) }
         if eventFlags.contains(.maskControl) { result.insert(.control) }
+        if includingFunction && eventFlags.contains(.maskSecondaryFn) { result.insert(.function) }
         self = result
     }
 
-    init(modifierFlags: NSEvent.ModifierFlags) {
+    init(modifierFlags: NSEvent.ModifierFlags, includingFunction: Bool = false) {
         var result: ShortcutModifiers = []
         if modifierFlags.contains(.command) { result.insert(.command) }
         if modifierFlags.contains(.shift) { result.insert(.shift) }
         if modifierFlags.contains(.option) { result.insert(.option) }
         if modifierFlags.contains(.control) { result.insert(.control) }
+        if includingFunction && modifierFlags.contains(.function) { result.insert(.function) }
         self = result
     }
+
+    /// How many modifier keys the set holds.
+    var count: Int { rawValue.nonzeroBitCount }
 
     var cgEventFlags: CGEventFlags {
         var flags: CGEventFlags = []
@@ -56,11 +65,13 @@ nonisolated struct ShortcutModifiers: OptionSet, Equatable, Sendable {
         if contains(.shift) { flags.insert(.maskShift) }
         if contains(.option) { flags.insert(.maskAlternate) }
         if contains(.control) { flags.insert(.maskControl) }
+        if contains(.function) { flags.insert(.maskSecondaryFn) }
         return flags
     }
 
     var displaySymbols: String {
         var parts: [String] = []
+        if contains(.function) { parts.append("fn ") }
         if contains(.control) { parts.append("⌃") }
         if contains(.option) { parts.append("⌥") }
         if contains(.shift) { parts.append("⇧") }
@@ -73,8 +84,19 @@ nonisolated struct KeyboardShortcut: Equatable, Sendable {
     var keyCode: Int64
     var modifiers: ShortcutModifiers
 
+    /// Key code of a shortcut made only of modifiers, such as fn⌃.  It
+    /// triggers when exactly those modifiers are held, with no other key.
+    static let modifierOnlyKeyCode: Int64 = -2
+
+    static func modifierOnly(_ modifiers: ShortcutModifiers) -> KeyboardShortcut {
+        KeyboardShortcut(keyCode: modifierOnlyKeyCode, modifiers: modifiers)
+    }
+
+    var isModifierOnly: Bool { keyCode == Self.modifierOnlyKeyCode }
+
     var displayString: String {
-        "\(modifiers.displaySymbols)\(KeyboardShortcut.displayKey(for: keyCode))"
+        if isModifierOnly { return modifiers.displaySymbols }
+        return "\(modifiers.displaySymbols)\(KeyboardShortcut.displayKey(for: keyCode))"
     }
 
     private static func displayKey(for keyCode: Int64) -> String {
@@ -348,6 +370,32 @@ class KeyboardMonitor: ObservableObject {
         }
     }
 
+    enum ModifierOnlyTransition: Equatable, Sendable {
+        case down(String)
+        case up(String)
+    }
+
+    /// Decide what a change in the held modifiers means for modifier-only
+    /// voice shortcuts.  A shortcut goes down when exactly its modifiers are
+    /// held and no other voice shortcut is held, and up as soon as any of its
+    /// modifiers is released.  Adding a modifier while held keeps it down.
+    nonisolated static func modifierOnlyTransition(
+        held: ShortcutModifiers,
+        heldVoiceHotkeyId: String?,
+        heldVoiceKeyCode: Int64?,
+        registrations: [VoiceHotkeyRegistration]
+    ) -> ModifierOnlyTransition? {
+        if let id = heldVoiceHotkeyId {
+            guard heldVoiceKeyCode == KeyboardShortcut.modifierOnlyKeyCode,
+                  let registration = registrations.first(where: { $0.id == id }) else { return nil }
+            return held.isSuperset(of: registration.shortcut.modifiers) ? nil : .up(id)
+        }
+        guard let registration = registrations.first(where: {
+            $0.shortcut.isModifierOnly && $0.shortcut.modifiers == held
+        }) else { return nil }
+        return .down(registration.id)
+    }
+
     /// While a voice session runs, Esc cancels it instead of reaching the
     /// frontmost application.
     func setVoiceSessionActive(_ active: Bool) {
@@ -362,6 +410,23 @@ class KeyboardMonitor: ObservableObject {
         let modifiers = shortcut.modifiers
         if modifiers.intersection([.command, .option, .control]).isEmpty {
             return "Voice shortcuts must include ⌘, ⌥ or ⌃."
+        }
+        if shortcut.isModifierOnly {
+            if modifiers.count < 2 {
+                return "Hold at least two modifier keys, for example fn⌃."
+            }
+            // Holding these modifiers is the first half of any shortcut
+            // that adds a key to them, so that shortcut could never fire.
+            let shadowed = ([popupHotkey] + otherVoiceHotkeys).first {
+                !$0.isModifierOnly && $0.modifiers.isSuperset(of: modifiers)
+            }
+            if let shadowed {
+                return "Holding \(modifiers.displaySymbols) would block \(shadowed.displayString). Add fn or another modifier."
+            }
+        } else if let modifierOnly = otherVoiceHotkeys.first(where: {
+            $0.isModifierOnly && modifiers.isSuperset(of: $0.modifiers)
+        }) {
+            return "Holding \(modifierOnly.displayString) already starts another voice action."
         }
         if shortcut.keyCode == 53 {
             return "Esc cancels voice sessions and can’t be a shortcut."
@@ -396,6 +461,9 @@ class KeyboardMonitor: ObservableObject {
     }
 
     static func validationError(for shortcut: KeyboardShortcut, pressMode: PopupHotkeyPressMode) -> String? {
+        guard !shortcut.isModifierOnly else {
+            return "The popup shortcut needs a key, for example ⌘C."
+        }
         guard shortcut.modifiers.contains(.command) else {
             return "Shortcut must include ⌘ (Command)."
         }
@@ -534,7 +602,9 @@ class KeyboardMonitor: ObservableObject {
         guard globalMonitoringEnabled, eventTap == nil, !eventTapSetupAttempted else { return }
         eventTapSetupAttempted = true
 
+        // flagsChanged reports modifier presses, for shortcuts such as fn⌃.
         let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
+            | (1 << CGEventType.flagsChanged.rawValue)
 
         eventTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -581,6 +651,40 @@ class KeyboardMonitor: ObservableObject {
         }
 
         guard tapState.read(\.globalMonitoringEnabled) else {
+            return Unmanaged.passUnretained(event)
+        }
+
+        // Modifier events always reach other apps; swallowing them would
+        // leave the system with stuck or missing modifier state.
+        if type == .flagsChanged {
+            let held = ShortcutModifiers(eventFlags: event.flags, includingFunction: true)
+            let transition: ModifierOnlyTransition? = tapState.update { state in
+                let transition = Self.modifierOnlyTransition(
+                    held: held,
+                    heldVoiceHotkeyId: state.heldVoiceHotkeyId,
+                    heldVoiceKeyCode: state.heldVoiceKeyCode,
+                    registrations: state.voiceHotkeys
+                )
+                switch transition {
+                case .down(let id):
+                    state.heldVoiceHotkeyId = id
+                    state.heldVoiceKeyCode = KeyboardShortcut.modifierOnlyKeyCode
+                case .up:
+                    state.heldVoiceHotkeyId = nil
+                    state.heldVoiceKeyCode = nil
+                case nil:
+                    break
+                }
+                return transition
+            }
+            if let transition {
+                DispatchQueue.main.async { [weak self] in
+                    switch transition {
+                    case .down(let id): self?.onVoiceHotkey?(id, .down)
+                    case .up(let id): self?.onVoiceHotkey?(id, .up)
+                    }
+                }
+            }
             return Unmanaged.passUnretained(event)
         }
 
@@ -633,7 +737,10 @@ class KeyboardMonitor: ObservableObject {
                 return .pass
             }
 
-            if let registration = state.voiceHotkeys.first(where: {
+            // While a modifier-only shortcut is held, keys pressed with it are
+            // left to the frontmost app instead of starting a second action.
+            if state.heldVoiceKeyCode != KeyboardShortcut.modifierOnlyKeyCode,
+               let registration = state.voiceHotkeys.first(where: {
                 $0.shortcut.keyCode == keyCode && $0.shortcut.modifiers == observedModifiers
             }) {
                 state.heldVoiceHotkeyId = registration.id

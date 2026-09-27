@@ -112,8 +112,9 @@ Settings are applied when you press **Save**; **Cancel** discards the changes.
 By default, hold **⌃V** and speak, or tap it to start and tap again to stop; **Esc** cancels. The text is
 pasted where the cursor was, and your clipboard is put back afterwards. If no text field has focus,
 the text appears in the popup under the menu bar icon with a **Copy** button. Shortcuts use the
-physical key, so they work in any keyboard layout (⌃V and ⌃М are the same shortcut). Existing saved
-shortcuts are preserved. Change the shortcut and engine in **Settings → Voice**:
+physical key, so they work in any keyboard layout (⌃V and ⌃М are the same shortcut). A shortcut can
+also be modifiers alone, such as **fn⌃**: hold them together to talk. Existing saved shortcuts are
+preserved. Change the shortcut and engine in **Settings → Voice**:
 
 | Engine | Model | Good for |
 | --- | --- | --- |
