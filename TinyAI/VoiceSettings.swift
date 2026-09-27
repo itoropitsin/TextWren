@@ -80,12 +80,33 @@ nonisolated enum LocalTranscriptionModel: String, Codable, CaseIterable, Identif
     var useCase: String {
         switch self {
         case .voxtralMini4BRealtime:
-            return "Best quality, live text, 13 languages incl. Russian. Needs Apple Silicon and 16 GB RAM."
+            return "High-quality live transcription in 13 languages."
         case .nemotronStreaming35:
-            return "Fast everyday dictation with live text, 28 languages incl. Russian."
+            return "Fast live dictation in 28 languages."
         case .canary180MFlash:
-            return "Tiny and instant, English, German, Spanish, French."
+            return "Small offline model; transcribes when you stop recording."
         }
+    }
+
+    /// Widely spoken examples from the languages available in TinyAI. Canary
+    /// supports only four languages, so its complete list is shown instead.
+    var featuredLanguages: String {
+        switch self {
+        case .voxtralMini4BRealtime, .nemotronStreaming35:
+            return "English, Mandarin, Hindi, Spanish, Arabic"
+        case .canary180MFlash:
+            return "English, Spanish, French, German (all 4)"
+        }
+    }
+
+    /// The GGUF file holds the model weights. Runtime buffers and the app use
+    /// additional memory, so this is a rough baseline, not peak RAM.
+    var memoryDescription: String {
+        "RAM estimate: ~\(formattedSize) for weights + extra runtime memory."
+    }
+
+    var modelCardURL: URL {
+        URL(string: "https://huggingface.co/\(repository)")!
     }
 
     var repository: String {
@@ -172,16 +193,24 @@ nonisolated struct OpenAITranscriptionModel: Identifiable, Hashable, Sendable {
     let summary: String
 
     static let all: [OpenAITranscriptionModel] = [
-        OpenAITranscriptionModel(id: "gpt-transcribe", displayName: "GPT Transcribe", mode: .file,
-                                 summary: "Most accurate. Sends the recording when you stop."),
         OpenAITranscriptionModel(id: "gpt-live-transcribe", displayName: "GPT Live Transcribe", mode: .realtime,
-                                 summary: "Streams audio while you talk for the lowest delay.")
+                                 summary: "Live text while you speak · OpenAI list price $0.017/min (~$1.02/hour of audio)."),
+        OpenAITranscriptionModel(id: "gpt-transcribe", displayName: "GPT Transcribe", mode: .file,
+                                 summary: "Transcribes after you stop · OpenAI list price $0.0045/min (~$0.27/hour of audio).")
     ]
 
     static let defaultModel = all[0]
 
     static func resolve(_ id: String) -> OpenAITranscriptionModel {
         all.first { $0.id == id } ?? defaultModel
+    }
+}
+
+nonisolated enum VoiceOnboarding {
+    static let nemotronPromptedKey = "VoiceNemotronOnboardingPromptedV1"
+
+    static func shouldOfferNemotron(hasOpenAIKey: Bool, hasDownloadedModel: Bool, alreadyPrompted: Bool) -> Bool {
+        !hasOpenAIKey && !hasDownloadedModel && !alreadyPrompted
     }
 }
 
