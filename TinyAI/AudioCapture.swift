@@ -83,12 +83,19 @@ enum AudioCaptureError: LocalizedError {
 }
 
 enum MicrophonePermission {
+    /// Set once real (non-silent) audio arrives.  macOS feeds zeros to apps
+    /// without access, so a signal proves the grant even when the reported
+    /// authorization status is stale.
+    nonisolated(unsafe) static var hasReceivedAudio = false
+
     static var isGranted: Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized { return true }
+        if AVAudioApplication.shared.recordPermission == .granted { return true }
+        return hasReceivedAudio
     }
 
     static var isUndetermined: Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
+        !isGranted && AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
     }
 
     static func request(_ completion: @escaping (Bool) -> Void) {
@@ -200,6 +207,9 @@ nonisolated final class AudioCapture: @unchecked Sendable {
             guard error == nil, let channel = converted.floatChannelData?[0], converted.frameLength > 0 else { return }
             let samples = Array(UnsafeBufferPointer(start: channel, count: Int(converted.frameLength)))
             let rms = AudioCoding.rmsLevel(samples)
+            if rms > 0, !MicrophonePermission.hasReceivedAudio {
+                MicrophonePermission.hasReceivedAudio = true
+            }
 
             self.lock.lock()
             let accepted = self.recorded.count < maximumSamples

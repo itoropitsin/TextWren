@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import SwiftUI
 
 // MARK: - Shared layout
@@ -266,6 +267,12 @@ struct VoiceSettingsTab: View {
                             }
                         }
                         .id(microphoneRefresh)
+                        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                            microphoneRefresh = UUID()
+                        }
+                        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+                            microphoneRefresh = UUID()
+                        }
                     }
                     SettingsNote(text: "Global voice shortcuts also need Accessibility (see the Hotkeys tab).")
                 }
