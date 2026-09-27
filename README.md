@@ -198,6 +198,7 @@ Model output has em dashes (—) replaced with hyphens (-); code is left unchang
 ## Development
 
 - Unit tests: `xcodebuild test -scheme TinyAI-UnitTests -destination 'platform=macOS'`
+  (CI runs them and the `--build-only` release build on every PR: `.github/workflows/tests.yml`)
 - Manual checks: open `scripts/manual-test-kit.html` in a browser. It has rich-text samples
   (lists, links, code, tables, a long text) with the expected result for each.
 - Model catalog and request rules (reasoning, token budget): `ModelCatalog` and
