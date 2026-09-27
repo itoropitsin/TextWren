@@ -41,9 +41,25 @@ struct VoiceSettingsTests {
     @Test func transcriptionDefaultsWhenDecodingEmptyObject() throws {
         let settings = try JSONDecoder().decode(TranscriptionSettings.self, from: Data("{}".utf8))
         #expect(settings == TranscriptionSettings())
-        #expect(settings.dictationHotkey == VoiceHotkey(keyCode: 9, modifiers: [.control]))
+        #expect(settings.dictationHotkey == VoiceHotkey(shortcut: .modifierOnly([.function, .control]), mode: .holdOrToggle))
         #expect(settings.engine == .openAI)
         #expect(settings.openAIModel == "gpt-live-transcribe")
+    }
+
+    @Test func firstLaunchDictationHotkeyIsFnControl() {
+        let suite = "TinyAI.Tests.FirstLaunch.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = VoiceSettingsStore(defaults: defaults)
+        #expect(store.configuration.transcription.dictationHotkey?.shortcut == .modifierOnly([.function, .control]))
+        #expect(store.configuration.transcription.dictationHotkey?.displayString == "fn ⌃")
+    }
+
+    @Test func savedDictationHotkeySurvivesTheNewDefault() throws {
+        var saved = TranscriptionSettings()
+        saved.dictationHotkey = VoiceHotkey(keyCode: 9, modifiers: [.control]) // ⌃V from an older version
+        let decoded = try JSONDecoder().decode(TranscriptionSettings.self, from: JSONEncoder().encode(saved))
+        #expect(decoded.dictationHotkey == VoiceHotkey(keyCode: 9, modifiers: [.control]))
     }
 
     @Test func clearedDictationHotkeyStaysCleared() throws {
