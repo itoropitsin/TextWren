@@ -43,6 +43,9 @@
 		7A1C20022F9E0000004A2529 /* TranscribeCpp.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 7A1C20002F9E0000004A2529 /* TranscribeCpp.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		7A1C30012F9E0000004A2529 /* VoiceFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C30002F9E0000004A2529 /* VoiceFeatureTests.swift */; };
 		7A1C40012F9E0000004A2529 /* StatusHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C40002F9E0000004A2529 /* StatusHUD.swift */; };
+		7A1C50012F9E0000004A2529 /* LocalLLM.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1C50002F9E0000004A2529 /* LocalLLM.swift */; };
+		7A1C50032F9E0000004A2529 /* llama.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A1C50022F9E0000004A2529 /* llama.xcframework */; };
+		7A1C50042F9E0000004A2529 /* llama.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 7A1C50022F9E0000004A2529 /* llama.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -70,6 +73,7 @@
 			dstSubfolderSpec = 10;
 			files = (
 				7A1C20022F9E0000004A2529 /* TranscribeCpp.xcframework in Embed Frameworks */,
+				7A1C50042F9E0000004A2529 /* llama.xcframework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -117,6 +121,8 @@
 		7A1C20002F9E0000004A2529 /* TranscribeCpp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = TranscribeCpp.xcframework; path = Vendor/TranscribeCpp.xcframework; sourceTree = SOURCE_ROOT; };
 		7A1C30002F9E0000004A2529 /* VoiceFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceFeatureTests.swift; sourceTree = "<group>"; };
 		7A1C40002F9E0000004A2529 /* StatusHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusHUD.swift; sourceTree = "<group>"; };
+		7A1C50002F9E0000004A2529 /* LocalLLM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalLLM.swift; sourceTree = "<group>"; };
+		7A1C50022F9E0000004A2529 /* llama.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = llama.xcframework; path = Vendor/llama.xcframework; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -125,6 +131,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7A1C20012F9E0000004A2529 /* TranscribeCpp.xcframework in Frameworks */,
+				7A1C50032F9E0000004A2529 /* llama.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -190,6 +197,7 @@
 				7A1C00032F9E0000004A2529 /* TextInserter.swift */,
 				7A1C00042F9E0000004A2529 /* OpenAITranscriptionClient.swift */,
 				7A1C00052F9E0000004A2529 /* LocalTranscription.swift */,
+				7A1C50002F9E0000004A2529 /* LocalLLM.swift */,
 				7A1C00062F9E0000004A2529 /* HTTPAgentClient.swift */,
 				7A1C00072F9E0000004A2529 /* MCPClient.swift */,
 				7A1C00082F9E0000004A2529 /* OAuthBrowserAuthorizer.swift */,
@@ -227,6 +235,7 @@
 			isa = PBXGroup;
 			children = (
 				7A1C20002F9E0000004A2529 /* TranscribeCpp.xcframework */,
+				7A1C50022F9E0000004A2529 /* llama.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -238,7 +247,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2C2167152EEC7399004A2529 /* Build configuration list for PBXNativeTarget "TinyAI" */;
 			buildPhases = (
-				7A1C20042F9E0000004A2529 /* Fetch transcribe.cpp */,
+				7A1C20042F9E0000004A2529 /* Fetch transcribe.cpp and llama.cpp */,
 				2C2166F02EEC7398004A2529 /* Sources */,
 				2C2166F12EEC7398004A2529 /* Frameworks */,
 				2C2166F22EEC7398004A2529 /* Resources */,
@@ -365,7 +374,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		7A1C20042F9E0000004A2529 /* Fetch transcribe.cpp */ = {
+		7A1C20042F9E0000004A2529 /* Fetch transcribe.cpp and llama.cpp */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -373,12 +382,12 @@
 			);
 			inputPaths = (
 			);
-			name = "Fetch transcribe.cpp";
+			name = "Fetch transcribe.cpp and llama.cpp";
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"$SRCROOT/scripts/fetch_transcribe_cpp.sh\"\n";
+			shellScript = "\"$SRCROOT/scripts/fetch_transcribe_cpp.sh\"\n\"$SRCROOT/scripts/fetch_llama_cpp.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -403,6 +412,7 @@
 				7A1C10032F9E0000004A2529 /* TextInserter.swift in Sources */,
 				7A1C10042F9E0000004A2529 /* OpenAITranscriptionClient.swift in Sources */,
 				7A1C10052F9E0000004A2529 /* LocalTranscription.swift in Sources */,
+				7A1C50012F9E0000004A2529 /* LocalLLM.swift in Sources */,
 				7A1C10062F9E0000004A2529 /* HTTPAgentClient.swift in Sources */,
 				7A1C10072F9E0000004A2529 /* MCPClient.swift in Sources */,
 				7A1C10082F9E0000004A2529 /* OAuthBrowserAuthorizer.swift in Sources */,

@@ -171,10 +171,18 @@ TinyAI supports a fixed set of models, each with the reasoning levels its provid
 | --- | --- |
 | OpenAI | GPT-6 Luna, GPT-6 Sol, GPT-6 Astra, GPT-5.6 Luna, GPT-5.6 Terra, GPT-5.6 Sol, GPT-5.5 |
 | Google Gemini | Gemini 3.8 Flash, Gemini 3.5 Flash-Lite, Gemini 3.1 Pro |
+| On-device | Qwen3.5 4B (2.7 GB download, about 3 GB RAM while loaded) |
 
 The default is **GPT-6 Luna** with **Low** reasoning. In testing it was as accurate as higher
 levels for translation and grammar, and faster. Use Medium or High for explanations and harder
 tasks. Settings that refer to a model that is no longer supported switch to the default.
+
+**Qwen3.5 4B** runs on this Mac with llama.cpp, needs no API key, and the text never leaves the
+device. Download it in Settings → API, then pick it for translation or any action. In a blind
+comparison with GPT-6 Luna (Low) it scored 4.7 vs 4.8 of 5 for grammar but 3.8 vs 4.9 for
+translation. Reasoning is Off by default (it scored best); Low, Medium and High turn thinking on
+with a growing budget and are much slower. The model loads on first use and is freed after five
+idle minutes.
 
 Model output has em dashes (—) replaced with hyphens (-); code is left unchanged.
 
@@ -195,7 +203,10 @@ Model output has em dashes (—) replaced with hyphens (-); code is left unchang
 - Model catalog and request rules (reasoning, token budget): `ModelCatalog` and
   `LLMRequestPolicy` in `TinyAI/TranslationService.swift`.
 - Local speech engine: `scripts/fetch_transcribe_cpp.sh` downloads the pinned transcribe.cpp
-  framework into `Vendor/` (the build script and the Xcode build phase run it). The local-engine
+  framework into `Vendor/` (the build script and the Xcode build phase run it).
+  `scripts/fetch_llama_cpp.sh` does the same for llama.cpp, which runs the on-device text model
+  (`LocalLLMEngine` in `TinyAI/LocalLLM.swift`); its tests in `LocalLanguageModelTests` run only
+  when the model is downloaded. The local-engine
   tests in `TinyAITests/VoiceFeatureTests.swift` run only when the model files are downloaded.
 - Voice logs: `/usr/bin/log show --last 5m --predicate 'subsystem == "IT.TinyAI"' --style compact`
   shows hotkeys, recording level, transcripts and failures.

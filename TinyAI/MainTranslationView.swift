@@ -24,8 +24,8 @@ struct MainTranslationView: View {
     @State private var isSecondaryLoading: Bool = false
     @State private var primaryRequestId: UUID = UUID()
     @State private var secondaryRequestId: UUID = UUID()
-    @State private var primaryNetworkTask: URLSessionDataTask?
-    @State private var secondaryNetworkTask: URLSessionDataTask?
+    @State private var primaryNetworkTask: CancellableRequest?
+    @State private var secondaryNetworkTask: CancellableRequest?
     @State private var secondaryRunningActionId: UUID?
     @State private var primaryTitle: String = "Starred 1"
     @State private var secondaryTitle: String = "Starred 2"
@@ -336,7 +336,7 @@ struct MainTranslationView: View {
         text: String,
         languageMode: TranslationLanguageMode,
         requestId: UUID
-    ) -> URLSessionDataTask? {
+    ) -> CancellableRequest? {
         translationService.translateText(
             text: text,
             languageMode: languageMode,
@@ -364,7 +364,7 @@ struct MainTranslationView: View {
         html: String,
         languageMode: TranslationLanguageMode,
         requestId: UUID
-    ) -> URLSessionDataTask? {
+    ) -> CancellableRequest? {
         translationService.translateHTML(
             html: html,
             languageMode: languageMode,

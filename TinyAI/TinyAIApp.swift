@@ -283,6 +283,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         LocalTranscriptionEngine.shared.unloadNow()
+        LocalLLMEngine.shared.unloadNow()
     }
 
     deinit {

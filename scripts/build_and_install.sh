@@ -142,7 +142,7 @@ verify_signature() {
     fi
     entitlements="$(codesign -d --entitlements :- "$bundle" 2>/dev/null)" || return 1
     if [[ "$entitlements" != *"com.apple.security.cs.disable-library-validation"* ]]; then
-      echo "Локальная сборка не может загрузить CTranscribe без исключения Library Validation: $bundle" >&2
+      echo "Локальная сборка не может загрузить CTranscribe и llama без исключения Library Validation: $bundle" >&2
       return 1
     fi
   else
@@ -152,11 +152,14 @@ verify_signature() {
 
 mkdir -p "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources" "$app_bundle/Contents/Frameworks"
 
-# The local speech engine ships as a prebuilt framework; fetch the pinned
-# release once and embed it next to the executable.
+# The local speech and text engines ship as prebuilt frameworks; fetch the
+# pinned releases once and embed them next to the executable.
 "$project_root/scripts/fetch_transcribe_cpp.sh"
+"$project_root/scripts/fetch_llama_cpp.sh"
 transcribe_framework_dir="$project_root/Vendor/TranscribeCpp.xcframework/macos-arm64_x86_64"
 ditto "$transcribe_framework_dir/CTranscribe.framework" "$app_bundle/Contents/Frameworks/CTranscribe.framework"
+llama_framework_dir="$project_root/Vendor/llama.xcframework/macos-arm64_x86_64"
+ditto "$llama_framework_dir/llama.framework" "$app_bundle/Contents/Frameworks/llama.framework"
 
 echo "Собираю TinyAI $version ($build_number)…"
 swiftc \
@@ -174,6 +177,8 @@ swiftc \
   "$project_root"/TinyAI/*.swift \
   -F "$transcribe_framework_dir" \
   -framework CTranscribe \
+  -F "$llama_framework_dir" \
+  -framework llama \
   -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   -framework AppKit \
   -framework SwiftUI \
@@ -208,15 +213,17 @@ printf 'APPL????' > "$app_bundle/Contents/PkgInfo"
 
 if [[ -n "$signing_identity" ]]; then
   echo "Подписываю сертификатом: $signing_identity"
-  # The embedded framework arrives ad-hoc signed, so sign it before the app.
+  # The embedded frameworks arrive ad-hoc signed, so sign them before the app.
   # A local certificate has no Apple Team ID. The main executable therefore
-  # needs the narrow Library Validation exception to load this framework.
+  # needs the narrow Library Validation exception to load these frameworks.
   signing_entitlements="$project_root/TinyAI/TinyAI.entitlements"
   if [[ "$signing_mode" == "local" ]]; then
     signing_entitlements="$project_root/TinyAI/TinyAI.local.entitlements"
   fi
   codesign --force --options runtime --sign "$signing_identity" \
     "$app_bundle/Contents/Frameworks/CTranscribe.framework"
+  codesign --force --options runtime --sign "$signing_identity" \
+    "$app_bundle/Contents/Frameworks/llama.framework"
   codesign --force --options runtime --sign "$signing_identity" \
     --entitlements "$signing_entitlements" \
     "$app_bundle"
@@ -227,6 +234,7 @@ fi
 echo "Проверяю собранное приложение…"
 test -x "$app_bundle/Contents/MacOS/TinyAI"
 test -f "$app_bundle/Contents/Frameworks/CTranscribe.framework/Versions/A/CTranscribe"
+test -f "$app_bundle/Contents/Frameworks/llama.framework/Versions/A/llama"
 test -s "$app_bundle/Contents/Resources/AppIcon.icns"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_bundle/Contents/Info.plist")" = "$version"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_bundle/Contents/Info.plist")" = "$build_number"
