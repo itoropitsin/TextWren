@@ -13,12 +13,43 @@ enum LocalModelState: Equatable {
     case failed(String)
 }
 
+/// A model file TinyAI downloads: a speech model or an on-device text model.
+nonisolated enum LocalModelAsset: Hashable, Sendable {
+    case transcription(LocalTranscriptionModel)
+    case language(LocalLanguageModel)
+
+    static var all: [LocalModelAsset] {
+        LocalTranscriptionModel.allCases.map(Self.transcription) + LocalLanguageModel.allCases.map(Self.language)
+    }
+
+    var filename: String {
+        switch self {
+        case .transcription(let model): return model.filename
+        case .language(let model): return model.filename
+        }
+    }
+
+    var downloadURLs: [URL] {
+        switch self {
+        case .transcription(let model): return model.downloadURLs
+        case .language(let model): return model.downloadURLs
+        }
+    }
+
+    var sha256: String {
+        switch self {
+        case .transcription(let model): return model.sha256
+        case .language(let model): return model.sha256
+        }
+    }
+}
+
 /// Downloads, verifies and deletes the local model files.
 final class LocalModelManager: ObservableObject {
-    @Published private(set) var states: [LocalTranscriptionModel: LocalModelState] = [:]
+    @Published private(set) var states: [LocalModelAsset: LocalModelState] = [:]
 
-    private var tasks: [LocalTranscriptionModel: URLSessionDownloadTask] = [:]
-    private var progressObservers: [LocalTranscriptionModel: NSKeyValueObservation] = [:]
+    private var tasks: [LocalModelAsset: URLSessionDownloadTask] = [:]
+    private var progressObservers: [LocalModelAsset: NSKeyValueObservation] = [:]
 
     nonisolated static var modelsDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -26,12 +57,28 @@ final class LocalModelManager: ObservableObject {
         return base.appendingPathComponent("TinyAI/Models", isDirectory: true)
     }
 
+    nonisolated static func fileURL(for asset: LocalModelAsset) -> URL {
+        modelsDirectory.appendingPathComponent(asset.filename)
+    }
+
     nonisolated static func fileURL(for model: LocalTranscriptionModel) -> URL {
-        modelsDirectory.appendingPathComponent(model.filename)
+        fileURL(for: .transcription(model))
+    }
+
+    nonisolated static func fileURL(for model: LocalLanguageModel) -> URL {
+        fileURL(for: .language(model))
+    }
+
+    nonisolated static func isDownloaded(_ asset: LocalModelAsset) -> Bool {
+        FileManager.default.fileExists(atPath: fileURL(for: asset).path)
     }
 
     nonisolated static func isDownloaded(_ model: LocalTranscriptionModel) -> Bool {
-        FileManager.default.fileExists(atPath: fileURL(for: model).path)
+        isDownloaded(.transcription(model))
+    }
+
+    nonisolated static func isDownloaded(_ model: LocalLanguageModel) -> Bool {
+        isDownloaded(.language(model))
     }
 
     init() {
@@ -39,40 +86,52 @@ final class LocalModelManager: ObservableObject {
     }
 
     func refresh() {
-        for model in LocalTranscriptionModel.allCases where tasks[model] == nil {
-            states[model] = Self.isDownloaded(model) ? .ready : .notDownloaded
+        for asset in LocalModelAsset.all where tasks[asset] == nil {
+            states[asset] = Self.isDownloaded(asset) ? .ready : .notDownloaded
         }
     }
 
-    func state(for model: LocalTranscriptionModel) -> LocalModelState {
-        states[model] ?? .notDownloaded
+    func state(for model: LocalTranscriptionModel) -> LocalModelState { state(for: .transcription(model)) }
+    func state(for model: LocalLanguageModel) -> LocalModelState { state(for: .language(model)) }
+    func download(_ model: LocalTranscriptionModel) { download(.transcription(model)) }
+    func download(_ model: LocalLanguageModel) { download(.language(model)) }
+    func cancelDownload(_ model: LocalTranscriptionModel) { cancelDownload(.transcription(model)) }
+    func cancelDownload(_ model: LocalLanguageModel) { cancelDownload(.language(model)) }
+    func delete(_ model: LocalTranscriptionModel) { delete(.transcription(model)) }
+    func delete(_ model: LocalLanguageModel) { delete(.language(model)) }
+
+    func state(for asset: LocalModelAsset) -> LocalModelState {
+        states[asset] ?? .notDownloaded
     }
 
-    func download(_ model: LocalTranscriptionModel) {
-        guard tasks[model] == nil, !Self.isDownloaded(model) else { return }
-        start(model, urls: model.downloadURLs)
+    func download(_ asset: LocalModelAsset) {
+        guard tasks[asset] == nil, !Self.isDownloaded(asset) else { return }
+        start(asset, urls: asset.downloadURLs)
     }
 
-    func cancelDownload(_ model: LocalTranscriptionModel) {
-        tasks[model]?.cancel()
-        tasks[model] = nil
-        progressObservers[model] = nil
-        states[model] = .notDownloaded
+    func cancelDownload(_ asset: LocalModelAsset) {
+        tasks[asset]?.cancel()
+        tasks[asset] = nil
+        progressObservers[asset] = nil
+        states[asset] = .notDownloaded
     }
 
-    func delete(_ model: LocalTranscriptionModel) {
-        cancelDownload(model)
-        LocalTranscriptionEngine.shared.unload()
-        try? FileManager.default.removeItem(at: Self.fileURL(for: model))
-        states[model] = .notDownloaded
+    func delete(_ asset: LocalModelAsset) {
+        cancelDownload(asset)
+        switch asset {
+        case .transcription: LocalTranscriptionEngine.shared.unload()
+        case .language: LocalLLMEngine.shared.unload()
+        }
+        try? FileManager.default.removeItem(at: Self.fileURL(for: asset))
+        states[asset] = .notDownloaded
     }
 
-    private func start(_ model: LocalTranscriptionModel, urls: [URL]) {
+    private func start(_ asset: LocalModelAsset, urls: [URL]) {
         guard let url = urls.first else { return }
         let remaining = Array(urls.dropFirst())
-        states[model] = .downloading(0)
+        states[asset] = .downloading(0)
 
-        let staging = Self.modelsDirectory.appendingPathComponent(".\(model.filename).download")
+        let staging = Self.modelsDirectory.appendingPathComponent(".\(asset.filename).download")
         let task = URLSession.shared.downloadTask(with: url) { [weak self] location, response, error in
             // The temporary file disappears when this handler returns, so it
             // is moved into place synchronously here.
@@ -89,36 +148,36 @@ final class LocalModelManager: ObservableObject {
             }
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.tasks[model] = nil
-                self.progressObservers[model] = nil
+                self.tasks[asset] = nil
+                self.progressObservers[asset] = nil
                 if let error = error as NSError?, error.code == NSURLErrorCancelled { return }
                 if error != nil || moveError != nil || !(200..<300).contains(status) {
                     if !remaining.isEmpty {
-                        self.start(model, urls: remaining)
+                        self.start(asset, urls: remaining)
                     } else {
                         let message = error?.localizedDescription ?? moveError?.localizedDescription ?? "HTTP \(status)"
-                        self.states[model] = .failed("Download failed: \(message)")
+                        self.states[asset] = .failed("Download failed: \(message)")
                     }
                     return
                 }
-                self.verify(model, staging: staging)
+                self.verify(asset, staging: staging)
             }
         }
-        progressObservers[model] = task.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
+        progressObservers[asset] = task.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
             let fraction = progress.fractionCompleted
             DispatchQueue.main.async {
-                guard let self, self.tasks[model] != nil else { return }
-                self.states[model] = .downloading(fraction)
+                guard let self, self.tasks[asset] != nil else { return }
+                self.states[asset] = .downloading(fraction)
             }
         }
-        tasks[model] = task
+        tasks[asset] = task
         task.resume()
     }
 
-    private func verify(_ model: LocalTranscriptionModel, staging: URL) {
-        states[model] = .verifying
-        let expected = model.sha256
-        let destination = Self.fileURL(for: model)
+    private func verify(_ asset: LocalModelAsset, staging: URL) {
+        states[asset] = .verifying
+        let expected = asset.sha256
+        let destination = Self.fileURL(for: asset)
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let actual = Self.sha256(of: staging)
             var failure: String?
@@ -134,7 +193,7 @@ final class LocalModelManager: ObservableObject {
                 failure = "The downloaded file is damaged (checksum mismatch)."
             }
             DispatchQueue.main.async {
-                self?.states[model] = failure.map { .failed($0) } ?? .ready
+                self?.states[asset] = failure.map { .failed($0) } ?? .ready
             }
         }
     }

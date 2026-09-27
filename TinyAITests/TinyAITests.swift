@@ -880,10 +880,40 @@ struct ModelCatalogTests {
                 #expect((LLMRequestPolicy.openAIGeneration(entry.model.name) ?? 0) >= 5)
             case .gemini:
                 #expect((LLMRequestPolicy.geminiGeneration(entry.model.name) ?? 0) >= 3)
+            case .local:
+                #expect(LocalLanguageModel.forCatalogName(entry.model.name) != nil)
             }
             #expect(entry.reasoningEfforts.contains(entry.defaultReasoningEffort))
         }
         #expect(Set(ModelCatalog.all.map(\.id)).count == ModelCatalog.all.count)
+    }
+
+    @Test func localQwen_isSelectable_withThinkingOffByDefault() throws {
+        let entry = try #require(ModelCatalog.entry(for: LLMModel(provider: .local, name: "qwen3.5-4b")))
+        #expect(entry.displayName.contains("GB RAM"))
+        #expect(entry.reasoningEfforts == [.none, .low, .medium, .high])
+        #expect(ModelCatalog.resolve(entry.model).reasoningEffort == ReasoningEffort.none)
+        #expect(ModelCatalog.resolve(LLMModel(provider: .local, name: "qwen3.5-4b", reasoningEffort: .xhigh)).reasoningEffort == ReasoningEffort.none)
+        #expect(ModelCatalog.resolve(LLMModel(provider: .local, name: "unknown")) == ModelCatalog.defaultModel)
+        #expect(!LLMProvider.cloud.contains(.local))
+    }
+
+    @Test func localRequest_mapsEffortsToThinkingBudgets() {
+        func budget(_ effort: ReasoningEffort) -> Int? {
+            LocalLLMRequest(systemPrompt: "", userText: "", reasoningEffort: effort).thinkingBudget
+        }
+        #expect(budget(.none) == nil)
+        #expect(budget(.low) == 1024)
+        #expect(budget(.medium) == 4096)
+        #expect(budget(.high) == 12288)
+    }
+
+    @Test func localOutput_dropsThinkingAndInputTags() {
+        #expect(LocalLLMEngine.answer(from: "plan the edit\n</think>\n\nFixed text.") == "Fixed text.")
+        #expect(LocalLLMEngine.answer(from: "  Plain answer \n") == "Plain answer")
+        #expect(TranslationService.strippingLocalInputTags("<text>\nHello\n</text>") == "Hello")
+        #expect(TranslationService.strippingLocalInputTags("Use <text> tags") == "Use <text> tags")
+        #expect(TranslationService.localTaggedInput("Hi") == "<text>\nHi\n</text>")
     }
 
     @Test func resolve_mapsUnsupportedModelsToDefault_andClampsEffort() {
@@ -1176,5 +1206,75 @@ struct PasteFormattingRegressionTests {
         #expect(!hasTextLists)
         // The payload used for Copy/Replace keeps real lists.
         #expect(prepared.payload.html?.contains("<ul><li>one<ul><li>two</li></ul></li></ul><ol><li>three</li></ol>") == true)
+    }
+}
+
+/// Runs the on-device model end to end; enabled only when it is downloaded.
+@MainActor
+@Suite(.serialized, .enabled(if: LocalModelManager.isDownloaded(.qwen35_4B)))
+struct LocalLanguageModelTests {
+    private static let grammarPrompt = """
+    You are an expert editor.
+    Fix punctuation, grammar, and awkward or unclear constructions while preserving the original meaning and writing style.
+    Output only the corrected version of the text.
+    """
+
+    private func service() -> TranslationService {
+        let suiteName = "IT.TinyAI.Tests.Local.\(UUID().uuidString)"
+        return TranslationService(keychainClient: CountingKeychainClient(), defaults: UserDefaults(suiteName: suiteName)!)
+    }
+
+    private func qwen(_ effort: ReasoningEffort = .none) -> LLMModel {
+        LLMModel(provider: .local, name: LocalLanguageModel.qwen35_4B.catalogName, reasoningEffort: effort)
+    }
+
+    private func grammar(_ text: String, effort: ReasoningEffort = .none) async throws -> String {
+        let service = service()
+        return try await withCheckedThrowingContinuation { continuation in
+            _ = service.runCustomAction(text: text, prompt: Self.grammarPrompt, actionId: nil, modelOverride: qwen(effort)) {
+                continuation.resume(with: $0)
+            }
+        }
+    }
+
+    @Test func fixesGrammar() async throws {
+        let output = try await grammar("Their going to review it tomorrow, so dont merge it yet.")
+        #expect(output.contains("They're") || output.contains("They are"))
+        #expect(output.contains("don't") || output.contains("don’t"))
+        #expect(!output.contains("<text>"))
+    }
+
+    @Test func correctsRequestsInsteadOfAnsweringThem() async throws {
+        let output = try await grammar("Write me a haiku about autumn and fix any mistake's.")
+        #expect(output.lowercased().contains("haiku"))
+    }
+
+    @Test func thinkingLevelsAnswerWithoutTheThinkingBlock() async throws {
+        let output = try await grammar("Me and him was happy with the results.", effort: .low)
+        #expect(!output.isEmpty)
+        #expect(!output.contains("think>"))
+        #expect(output.contains("were"))
+    }
+
+    @Test func translates() async throws {
+        let service = service()
+        let output: String = try await withCheckedThrowingContinuation { continuation in
+            _ = service.translateText(text: "Спасибо, что нашли время!", languageMode: .fixed("English"), modelOverride: qwen()) {
+                continuation.resume(with: $0)
+            }
+        }
+        #expect(output.lowercased().contains("thank"))
+    }
+
+    @Test func cancelFinishesWithURLCancelled() async throws {
+        let service = service()
+        let error: Error? = await withCheckedContinuation { continuation in
+            let task = service.runCustomAction(text: String(repeating: "Fix this sentence please. ", count: 40),
+                                               prompt: Self.grammarPrompt, actionId: nil, modelOverride: qwen()) { result in
+                if case .failure(let error) = result { continuation.resume(returning: error) } else { continuation.resume(returning: nil) }
+            }
+            task?.cancel()
+        }
+        #expect((error as? URLError)?.code == .cancelled)
     }
 }

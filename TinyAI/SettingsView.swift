@@ -201,6 +201,20 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("On-device models")
+                        .font(.headline)
+
+                    ForEach(LocalLanguageModel.allCases) { model in
+                        LocalLanguageModelRow(model: model, modelManager: localModelManager)
+                    }
+
+                    Text("Choose them as the model for translation or any action. They run with llama.cpp and need no key; the model loads on first use and is freed after five idle minutes.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(.horizontal)
             .padding(.bottom, 8)
@@ -208,7 +222,7 @@ struct SettingsView: View {
     }
 
     private var draftKeysAreReadyForSave: Bool {
-        for provider in LLMProvider.allCases {
+        for provider in LLMProvider.cloud {
             let candidate = (provider == .openAI ? openAIKey : geminiKey)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let saved = translationService.apiKey(for: provider)
@@ -584,6 +598,9 @@ struct SettingsView: View {
                     .padding(.vertical, 2)
                     .hoverRowHighlight()
 
+                    LocalModelDownloadNote(selection: builtInTranslateModel, modelManager: localModelManager)
+                        .padding(.leading, settingsLabelColumnWidth + 12)
+
                     HStack(alignment: .center, spacing: 12) {
                         Text("Auto: Main")
                             .foregroundColor(.secondary)
@@ -741,6 +758,11 @@ struct SettingsView: View {
                                         .foregroundColor(.secondary)
                                     ReasoningEffortPicker(selection: $customActions[index].model)
                                         .frame(width: customActionModelPickerWidth)
+                                }
+
+                                HStack {
+                                    Spacer()
+                                    LocalModelDownloadNote(selection: customActions[index].model, modelManager: localModelManager)
                                 }
 
                                 InsetTextEditor(text: $customActions[index].prompt)
@@ -1008,11 +1030,95 @@ private struct ReasoningEffortPicker: View {
             set: { selection = selection.withReasoningEffort($0) }
         )) {
             ForEach(efforts) { effort in
-                Text(effort == entry?.defaultReasoningEffort ? "\(effort.displayName) (default)" : effort.displayName)
+                let name = selection.provider == .local ? effort.localThinkingName : effort.displayName
+                Text(effort == entry?.defaultReasoningEffort ? "\(name) (default)" : name)
                     .tag(effort)
             }
         }
         .pickerStyle(.menu)
         .disabled(efforts.count < 2)
+    }
+}
+
+private extension ReasoningEffort {
+    /// Local models only switch thinking on or off; the levels are budgets.
+    var localThinkingName: String {
+        switch self {
+        case .none, .minimal: return "Off"
+        case .low: return "Low (short thinking)"
+        case .medium: return "Medium"
+        case .high, .xhigh, .max: return "High (slow)"
+        }
+    }
+}
+
+/// Download, progress and delete controls for one on-device text model.
+private struct LocalLanguageModelRow: View {
+    let model: LocalLanguageModel
+    @ObservedObject var modelManager: LocalModelManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(model.displayName).fontWeight(.semibold)
+                Text("\(model.formattedSize) download · \(model.memoryFootprint)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Text(model.useCase)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                switch modelManager.state(for: model) {
+                case .notDownloaded:
+                    Button("Download") { modelManager.download(model) }.controlSize(.small)
+                case .downloading(let progress):
+                    ProgressView(value: progress).frame(width: 140)
+                    Text("\(Int(progress * 100))%").font(.caption).monospacedDigit()
+                    Button("Cancel") { modelManager.cancelDownload(model) }.controlSize(.small)
+                case .verifying:
+                    ProgressView().controlSize(.small)
+                    Text("Verifying…").font(.caption)
+                case .ready:
+                    Label("Downloaded", systemImage: "checkmark.circle.fill")
+                        .font(.caption).foregroundColor(.green)
+                    Button("Delete") { modelManager.delete(model) }.controlSize(.small)
+                case .failed(let message):
+                    Text(message).font(.caption).foregroundColor(.red).lineLimit(2)
+                    Button("Retry") { modelManager.download(model) }.controlSize(.small)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .hoverRowHighlight()
+    }
+}
+
+/// Shown under a model picker when an on-device model is chosen but its
+/// file is not on this Mac yet.
+private struct LocalModelDownloadNote: View {
+    let selection: LLMModel
+    @ObservedObject var modelManager: LocalModelManager
+
+    var body: some View {
+        if selection.provider == .local, let model = LocalLanguageModel.forCatalogName(selection.name) {
+            switch modelManager.state(for: model) {
+            case .ready:
+                EmptyView()
+            case .downloading(let progress):
+                Text("Downloading \(model.displayName)… \(Int(progress * 100))%")
+                    .font(.caption).foregroundColor(.secondary)
+            case .verifying:
+                Text("Verifying \(model.displayName)…").font(.caption).foregroundColor(.secondary)
+            case .notDownloaded, .failed:
+                HStack(spacing: 8) {
+                    Label("\(model.displayName) is not downloaded (\(model.formattedSize))", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                    Button("Download") { modelManager.download(model) }.controlSize(.small)
+                }
+            }
+        }
     }
 }
