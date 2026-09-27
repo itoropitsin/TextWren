@@ -31,7 +31,10 @@ zsh scripts/build_and_install.sh
 The script needs an Apple Development certificate for team `Y29LYS5D8M` and refuses to install a
 version that is not newer than the installed one. Bump `MARKETING_VERSION` and
 `CURRENT_PROJECT_VERSION` in Xcode and the matching `version` and `build_number` at the top of the
-script together. Use `--build-only` for an unsigned test build.
+script together. Use `--build-only` for an unsigned test build. For an ad hoc signed
+release archive without a certificate, run `zsh scripts/sign_release_ad_hoc.sh /path/to/TinyAI.app`
+after building and before creating the ZIP. Ad hoc signatures can change between builds, so macOS
+may require Accessibility to be granted again after an update.
 
 You can also build and run `TinyAI.xcodeproj` from Xcode.
 
@@ -43,7 +46,8 @@ You can also build and run `TinyAI.xcodeproj` from Xcode.
    one of your actions.
 3. When macOS asks, allow **Accessibility** for TinyAI (System Settings → Privacy & Security).
    The popup hotkey, voice shortcuts and Replace need it. If a previously enabled entry does not
-   work after an unsigned update, remove it, add `/Applications/TinyAI.app`, enable it and relaunch.
+   work after an update without Developer ID signing, remove it, add `/Applications/TinyAI.app`,
+   enable it and relaunch.
 4. For voice features, allow **Microphone** access when asked (or in **Settings → Voice**).
 
 Settings are applied when you press **Save**; **Cancel** discards the changes.
