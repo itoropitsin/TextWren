@@ -217,7 +217,7 @@ struct VoiceSettingsTab: View {
 
                     if draft.transcription.engine == .openAI {
                         SettingsRow(label: "Vocabulary", alignment: .top) {
-                            TextField("Names and terms, e.g. TinyAI, Kubernetes", text: $draft.transcription.vocabulary, axis: .vertical)
+                            TextField("Names and terms, e.g. TextWren, Kubernetes", text: $draft.transcription.vocabulary, axis: .vertical)
                                 .textFieldStyle(.roundedBorder)
                                 .lineLimit(2...4)
                         }
@@ -619,7 +619,7 @@ struct AgentsSettingsTab: View {
                     store.updateConnection(saved)
                     connectionStatus[connection.id] = "Connected. \(tools.count) tool\(tools.count == 1 ? "" : "s") available."
                 case .http:
-                    let values = AgentTemplateValues(transcript: "Hello from TinyAI. Reply with a short greeting.",
+                    let values = AgentTemplateValues(transcript: "Hello from TextWren. Reply with a short greeting.",
                                                      sessionId: UUID().uuidString, language: "en", agentName: connection.name)
                     let answer = try await HTTPAgentClient.send(connection: connection, values: values,
                                                                secret: headerSecrets[connection.id] ?? store.headerSecret(for: connection))

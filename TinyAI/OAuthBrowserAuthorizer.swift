@@ -194,7 +194,7 @@ enum OAuthError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .discoveryFailed(let message): return "Could not find the sign-in server: \(message)"
-        case .registrationUnsupported: return "The server does not allow TinyAI to register for sign-in. Use a header token instead."
+        case .registrationUnsupported: return "The server does not allow TextWren to register for sign-in. Use a header token instead."
         case .registrationFailed(let message): return "Client registration failed: \(message)"
         case .browserFailed: return "Could not open the browser for sign-in."
         case .denied(let message): return "Sign-in was not completed: \(message)"
@@ -324,7 +324,7 @@ enum OAuthBrowserAuthorizer {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "client_name": "TinyAI",
+            "client_name": "TextWren",
             "redirect_uris": [redirectURI],
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
@@ -479,8 +479,8 @@ final class LoopbackListener {
             let succeeded = parameters != nil && parameters?["error"] == nil
             let message = parameters == nil
                 ? "Not found."
-                : (succeeded ? "TinyAI is signed in. You can close this tab." : "Sign-in was not completed. You can close this tab.")
-            let html = "<!doctype html><meta charset=utf-8><title>TinyAI</title><body style=\"font:16px -apple-system;padding:40px\">\(message)</body>"
+                : (succeeded ? "TextWren is signed in. You can close this tab." : "Sign-in was not completed. You can close this tab.")
+            let html = "<!doctype html><meta charset=utf-8><title>TextWren</title><body style=\"font:16px -apple-system;padding:40px\">\(message)</body>"
             let status = parameters == nil ? "404 Not Found" : "200 OK"
             let response = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(html.utf8.count)\r\nConnection: close\r\n\r\n\(html)"
             connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in

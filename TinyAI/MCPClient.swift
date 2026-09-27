@@ -132,7 +132,7 @@ nonisolated enum MCPMessages {
         return [
             "protocolVersion": protocolVersion,
             "capabilities": [String: Any](),
-            "clientInfo": ["name": "TinyAI", "version": version]
+            "clientInfo": ["name": "TextWren", "version": version]
         ]
     }
 

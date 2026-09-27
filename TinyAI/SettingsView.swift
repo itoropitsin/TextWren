@@ -334,7 +334,7 @@ struct SettingsView: View {
                         case .missing:
                             apiAlert = APIAlert(title: "Key not found", message: "No saved \(provider.displayName) key was found in Keychain.")
                         case .interactionRequired, .failure:
-                            apiAlert = APIAlert(title: "Keychain access unavailable", message: "Allow access to the TinyAI Keychain item, then try again.")
+                            apiAlert = APIAlert(title: "Keychain access unavailable", message: "Allow access to the TextWren Keychain item, then try again.")
                         }
                     }
                     .buttonStyle(.bordered)
@@ -542,7 +542,7 @@ struct SettingsView: View {
                 .padding(.vertical, 2)
 
                 if !granted {
-                    Text("Already enabled? Remove the old TinyAI entry with −, add /Applications/TinyAI.app with +, enable it, then relaunch TinyAI.")
+                    Text("Already enabled? Remove the old TinyAI or TextWren entry with −, add /Applications/TextWren.app with +, enable it, then relaunch TextWren.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

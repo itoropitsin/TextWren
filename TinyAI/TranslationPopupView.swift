@@ -143,7 +143,7 @@ struct TranslationPopupView: View {
             VStack(spacing: 12) {
                 // Header - make it draggable
                 HStack(spacing: 10) {
-                    Text("TinyAI")
+                    Text("TextWren")
                         .font(.headline)
                     Spacer()
                     Button(action: {

@@ -51,7 +51,7 @@ struct AgentResponseView: View {
     private var title: String {
         if case .live = coordinator.state { return "Live conversation" }
         if let response = coordinator.response { return response.title }
-        return coordinator.liveTurns.isEmpty ? "TinyAI" : "Live conversation"
+        return coordinator.liveTurns.isEmpty ? "TextWren" : "Live conversation"
     }
 
     private func answer(_ response: AgentResponseContent) -> some View {
