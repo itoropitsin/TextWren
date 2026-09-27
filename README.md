@@ -3,6 +3,13 @@
 TinyAI is a small macOS app for everyday writing. It translates, fixes grammar, and runs your own
 prompts on any text, either in its own window or right where you are typing.
 
+<p align="center">
+  <img src="docs/main-window.png" alt="TinyAI main window with source text, Translate and Grammar panels" width="720">
+</p>
+<p align="center">
+  <img src="docs/dictation.png" alt="Dictation popup showing Listening" width="420">
+</p>
+
 - **Popup in any app.** Select text, press **⌘C twice**, get the result, then **Replace** the
   selection or **Copy** it.
 - **Main window** for longer text, with results that update as you type.
