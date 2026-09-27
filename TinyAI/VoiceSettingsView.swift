@@ -263,7 +263,7 @@ struct VoiceSettingsTab: View {
                         }
                         .id(microphoneRefresh)
                     }
-                    SettingsNote(text: "Global voice shortcuts also need Accessibility and Input Monitoring (see the Hotkeys tab).")
+                    SettingsNote(text: "Global voice shortcuts also need Accessibility (see the Hotkeys tab).")
                 }
             }
             .padding(.horizontal)

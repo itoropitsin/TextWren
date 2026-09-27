@@ -30,7 +30,7 @@ struct HelpView: View {
                     HelpSection(title: "Get started", systemImage: "sparkles") {
                         HelpStep(number: 1, text: "Open **Settings → API** and paste an OpenAI or Google Gemini API key. TinyAI checks the key before saving it.")
                         HelpStep(number: 2, text: "In **Settings → Primary**, choose what the two result panels show: Translate or one of your actions.")
-                        HelpStep(number: 3, text: "Allow **Accessibility** and **Input Monitoring** when macOS asks, so the popup hotkey and Replace work in other apps.")
+                        HelpStep(number: 3, text: "Allow **Accessibility** when macOS asks, so the popup hotkey and Replace work in other apps.")
                     }
 
                     HelpSection(title: "Popup in any app", systemImage: "cursorarrow.rays") {

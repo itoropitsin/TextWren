@@ -1,7 +1,6 @@
 import SwiftUI
 import AppKit
 import ApplicationServices
-import CoreGraphics
 import os
 
 enum TinyAIRuntime {
@@ -36,29 +35,20 @@ enum TinyAIRuntime {
 }
 
 /// Permission checks are kept separate from the event monitor so the app can
-/// inspect status without displaying a system dialog. Only the bounded launch
-/// path calls the requesting methods; Settings opens each privacy pane directly.
+/// inspect status without displaying a system dialog. Accessibility also
+/// authorizes the event tap used for global hotkeys.
 enum TinyAIPermissions {
     enum Permission: String, CaseIterable, Identifiable {
         case accessibility
-        case inputMonitoring
 
         var id: String { rawValue }
 
         var title: String {
-            switch self {
-            case .accessibility: return "Accessibility"
-            case .inputMonitoring: return "Input Monitoring"
-            }
+            "Accessibility"
         }
 
         var systemSettingsURL: URL {
-            let section: String
-            switch self {
-            case .accessibility: section = "Privacy_Accessibility"
-            case .inputMonitoring: section = "Privacy_ListenEvent"
-            }
-            return URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(section)")!
+            URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility")!
         }
     }
 
@@ -70,39 +60,19 @@ enum TinyAIPermissions {
         AXIsProcessTrusted()
     }
 
-    static var inputMonitoringGranted: Bool {
-        if #available(macOS 10.15, *) {
-            return CGPreflightListenEventAccess()
-        }
-        return true
-    }
-
     static var allGranted: Bool {
-        accessibilityGranted && inputMonitoringGranted
+        accessibilityGranted
     }
 
     static func isGranted(_ permission: Permission) -> Bool {
-        switch permission {
-        case .accessibility: return accessibilityGranted
-        case .inputMonitoring: return inputMonitoringGranted
-        }
+        accessibilityGranted
     }
 
     static func requestablePermissions(
         accessibilityGranted: Bool,
-        inputMonitoringGranted: Bool,
         requested: Set<Permission>
     ) -> [Permission] {
-        Permission.allCases.filter { permission in
-            let granted: Bool
-            switch permission {
-            case .accessibility:
-                granted = accessibilityGranted
-            case .inputMonitoring:
-                granted = inputMonitoringGranted
-            }
-            return !granted && !requested.contains(permission)
-        }
+        Permission.allCases.filter { !accessibilityGranted && !requested.contains($0) }
     }
 
     /// Ask macOS for any currently missing permission, at most once per
@@ -113,7 +83,6 @@ enum TinyAIPermissions {
 
         let requestable = requestablePermissions(
             accessibilityGranted: accessibilityGranted,
-            inputMonitoringGranted: inputMonitoringGranted,
             requested: requestedThisProcess
         )
 
@@ -121,10 +90,6 @@ enum TinyAIPermissions {
             requestedThisProcess.insert(.accessibility)
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
             _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
-        }
-        if #available(macOS 10.15, *), requestable.contains(.inputMonitoring) {
-            requestedThisProcess.insert(.inputMonitoring)
-            _ = CGRequestListenEventAccess()
         }
         return allGranted
     }
@@ -344,13 +309,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if defaults.string(forKey: permissionPromptDefaultsKey) != token {
             // Mark before invoking macOS. If the user closes or denies the
             // dialog, this version will not surprise them with another prompt
-            // on every launch. Settings provides the explicit retry point.
+            // on every launch. Settings opens the permission's privacy pane.
             defaults.set(token, forKey: permissionPromptDefaultsKey)
             _ = TinyAIPermissions.requestMissing()
         }
 
         if !TinyAIPermissions.allGranted {
-            logger.notice("Accessibility and Input Monitoring permissions are required for global hotkeys")
+            logger.notice("Accessibility permission is required for global hotkeys")
         }
     }
 

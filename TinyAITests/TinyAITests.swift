@@ -58,9 +58,12 @@ struct TinyAITests {
         #expect(KeyboardMonitor.shouldRetryEventTap(permissionStateChanged: true, setupAlreadyAttempted: true) == true)
         #expect(TinyAIPermissions.requestablePermissions(
             accessibilityGranted: false,
-            inputMonitoringGranted: false,
             requested: [.accessibility]
-        ) == [.inputMonitoring])
+        ).isEmpty)
+        #expect(TinyAIPermissions.requestablePermissions(
+            accessibilityGranted: false,
+            requested: []
+        ) == [.accessibility])
     }
 
     @Test @MainActor func keyboardMonitor_testModeDoesNotInstallGlobalHook() {

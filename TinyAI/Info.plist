@@ -26,8 +26,6 @@
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
-    <key>NSInputMonitoringUsageDescription</key>
-    <string>TinyAI needs Input Monitoring to detect your configured hotkey and show the translation popup.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>TinyAI records your voice while you hold a voice shortcut, to transcribe it or send it to your agents.</string>
 </dict>

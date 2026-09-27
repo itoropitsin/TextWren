@@ -468,7 +468,7 @@ struct SettingsView: View {
 
     private var permissionsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Permissions")
+            Text("System permission")
                 .font(.headline)
 
             ForEach(TinyAIPermissions.Permission.allCases) { permission in
@@ -491,7 +491,17 @@ struct SettingsView: View {
                 }
                 .id("\(permission.rawValue)-\(permissionRefreshToken.uuidString)")
                 .padding(.vertical, 2)
+
+                if !granted {
+                    Text("Already enabled? Remove the old TinyAI entry with −, add /Applications/TinyAI.app with +, enable it, then relaunch TinyAI.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
+
+            Text("Input Monitoring does not need a separate grant when Accessibility is enabled.")
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
         .padding(.top, 8)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

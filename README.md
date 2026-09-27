@@ -41,9 +41,9 @@ You can also build and run `TinyAI.xcodeproj` from Xcode.
    saved.
 2. In **Settings → Primary**, choose what the two result panels show: the built-in Translate or
    one of your actions.
-3. When macOS asks, allow **Accessibility** and **Input Monitoring** for TinyAI (System Settings →
-   Privacy & Security). The popup hotkey, voice shortcuts and Replace need both. Relaunch TinyAI
-   after granting them.
+3. When macOS asks, allow **Accessibility** for TinyAI (System Settings → Privacy & Security).
+   The popup hotkey, voice shortcuts and Replace need it. If a previously enabled entry does not
+   work after an unsigned update, remove it, add `/Applications/TinyAI.app`, enable it and relaunch.
 4. For voice features, allow **Microphone** access when asked (or in **Settings → Voice**).
 
 Settings are applied when you press **Save**; **Cancel** discards the changes.

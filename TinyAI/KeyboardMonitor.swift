@@ -457,7 +457,7 @@ class KeyboardMonitor: ObservableObject {
         permissionStateChanged && setupAlreadyAttempted
     }
 
-    /// Start the global event tap after the user has granted both permissions.
+    /// Start the global event tap after the user has granted Accessibility.
     /// The monitor is created before the application delegate receives its
     /// launch callback, so startup must be able to enable it later without
     /// constructing a second monitor.
