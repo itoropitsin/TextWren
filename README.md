@@ -10,7 +10,7 @@ prompts on any text, either in its own window or right where you are typing.
   <img src="docs/main-window.png" alt="TinyAI main window with source text, Translate and Grammar panels" width="720">
 </p>
 <p align="center">
-  <img src="docs/dictation.png" alt="Dictation popup showing Listening" width="420">
+  <img src="docs/dictation.png" alt="Dictation popup under the menu bar icon, showing live text while listening" width="420">
 </p>
 
 - **Popup in any app.** Select text, press **⌘C twice**, get the result, then **Replace** the
