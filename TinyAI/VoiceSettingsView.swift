@@ -234,7 +234,7 @@ struct VoiceSettingsTab: View {
                                                              draft: draft, popupHotkey: popupHotkey)
                         }
                     }
-                    SettingsNote(text: "Hold the shortcut and speak, or tap it to start and tap again to stop. Esc cancels. The text is pasted where the cursor is.")
+                    SettingsNote(text: "Hold the shortcut and speak, or tap it to start and tap again to stop. Esc cancels. The text is pasted where the cursor is. A shortcut can also be modifiers alone: hold fn and ⌃ together, then release them.")
 
                     SettingsRow(label: "Clipboard") {
                         Toggle("Restore the clipboard after pasting", isOn: $draft.transcription.restoreClipboard)

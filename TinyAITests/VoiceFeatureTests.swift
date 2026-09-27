@@ -41,9 +41,25 @@ struct VoiceSettingsTests {
     @Test func transcriptionDefaultsWhenDecodingEmptyObject() throws {
         let settings = try JSONDecoder().decode(TranscriptionSettings.self, from: Data("{}".utf8))
         #expect(settings == TranscriptionSettings())
-        #expect(settings.dictationHotkey == VoiceHotkey(keyCode: 9, modifiers: [.control]))
+        #expect(settings.dictationHotkey == VoiceHotkey(shortcut: .modifierOnly([.function, .control]), mode: .holdOrToggle))
         #expect(settings.engine == .openAI)
         #expect(settings.openAIModel == "gpt-live-transcribe")
+    }
+
+    @Test func firstLaunchDictationHotkeyIsFnControl() {
+        let suite = "TinyAI.Tests.FirstLaunch.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = VoiceSettingsStore(defaults: defaults)
+        #expect(store.configuration.transcription.dictationHotkey?.shortcut == .modifierOnly([.function, .control]))
+        #expect(store.configuration.transcription.dictationHotkey?.displayString == "fn ⌃")
+    }
+
+    @Test func savedDictationHotkeySurvivesTheNewDefault() throws {
+        var saved = TranscriptionSettings()
+        saved.dictationHotkey = VoiceHotkey(keyCode: 9, modifiers: [.control]) // ⌃V from an older version
+        let decoded = try JSONDecoder().decode(TranscriptionSettings.self, from: JSONEncoder().encode(saved))
+        #expect(decoded.dictationHotkey == VoiceHotkey(keyCode: 9, modifiers: [.control]))
     }
 
     @Test func clearedDictationHotkeyStaysCleared() throws {
@@ -228,6 +244,56 @@ struct VoiceHotkeyTests {
         #expect(toggle.keyDown() == .start)
         #expect(toggle.keyUp() == .none)
         #expect(toggle.keyDown() == .stop)
+    }
+
+    // MARK: Modifier-only shortcuts
+
+    private let fnControl = KeyboardShortcut.modifierOnly([.function, .control])
+
+    @Test func modifierOnlyShortcut_displaysAndRoundTrips() {
+        #expect(fnControl.isModifierOnly)
+        #expect(fnControl.displayString == "fn ⌃")
+        let stored = VoiceHotkey(shortcut: fnControl, mode: .holdOrToggle)
+        #expect(stored.shortcut == fnControl)
+        #expect(!KeyboardShortcut(keyCode: 9, modifiers: [.control]).isModifierOnly)
+    }
+
+    @Test func modifierOnlyShortcut_validation() {
+        #expect(KeyboardMonitor.voiceValidationError(for: fnControl, popupHotkey: popup, otherVoiceHotkeys: []) == nil)
+        #expect(KeyboardMonitor.voiceValidationError(for: .modifierOnly([.control, .option]), popupHotkey: popup, otherVoiceHotkeys: []) == nil)
+        // One modifier alone, or fn/⇧ without ⌘, ⌥ or ⌃, is rejected.
+        #expect(KeyboardMonitor.voiceValidationError(for: .modifierOnly([.control]), popupHotkey: popup, otherVoiceHotkeys: []) != nil)
+        #expect(KeyboardMonitor.voiceValidationError(for: .modifierOnly([.function, .shift]), popupHotkey: popup, otherVoiceHotkeys: []) != nil)
+        // ⌃⌥ held would block ⌃⌥R, in either order of assignment.
+        let keyed = KeyboardShortcut(keyCode: 15, modifiers: [.control, .option])
+        #expect(KeyboardMonitor.voiceValidationError(for: .modifierOnly([.control, .option]), popupHotkey: popup, otherVoiceHotkeys: [keyed]) != nil)
+        #expect(KeyboardMonitor.voiceValidationError(for: keyed, popupHotkey: popup, otherVoiceHotkeys: [.modifierOnly([.control, .option])]) != nil)
+        // Keyed shortcuts never carry fn, so fn⌃ and ⌃V can coexist.
+        #expect(KeyboardMonitor.voiceValidationError(for: fnControl, popupHotkey: popup, otherVoiceHotkeys: [KeyboardShortcut(keyCode: 9, modifiers: [.control])]) == nil)
+        #expect(KeyboardMonitor.voiceValidationError(for: fnControl, popupHotkey: popup, otherVoiceHotkeys: [fnControl]) != nil)
+    }
+
+    @Test func popupShortcut_needsAKey() {
+        #expect(KeyboardMonitor.validationError(for: .modifierOnly([.command, .shift]), pressMode: .doublePress) != nil)
+    }
+
+    @Test func modifierOnlyTransitions() {
+        let registrations = [VoiceHotkeyRegistration(id: "dictation", shortcut: fnControl)]
+        func transition(_ held: ShortcutModifiers, heldId: String? = nil, keyCode: Int64? = nil) -> KeyboardMonitor.ModifierOnlyTransition? {
+            KeyboardMonitor.modifierOnlyTransition(held: held, heldVoiceHotkeyId: heldId, heldVoiceKeyCode: keyCode, registrations: registrations)
+        }
+        let heldCode = KeyboardShortcut.modifierOnlyKeyCode
+
+        // Pressing fn, then ⌃: only the exact set starts it.
+        #expect(transition([.function]) == nil)
+        #expect(transition([.function, .control]) == .down("dictation"))
+        #expect(transition([.function, .control, .shift]) == nil)
+        // Adding a modifier while held keeps it down; releasing either one stops it.
+        #expect(transition([.function, .control, .shift], heldId: "dictation", keyCode: heldCode) == nil)
+        #expect(transition([.control], heldId: "dictation", keyCode: heldCode) == .up("dictation"))
+        #expect(transition([], heldId: "dictation", keyCode: heldCode) == .up("dictation"))
+        // A held keyed shortcut is left to its own key-up.
+        #expect(transition([.control], heldId: "dictation", keyCode: 9) == nil)
     }
 }
 
