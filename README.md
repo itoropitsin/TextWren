@@ -1,13 +1,26 @@
-# TinyAI
+<p align="center">
+  <img src="docs/icon.png" alt="TextWren icon: an origami wren on a deep blue tile" width="128">
+</p>
+<h1 align="center">TextWren</h1>
+<p align="center">
+  Translate, fix grammar and dictate in any macOS app.<br>
+  Cloud models or fully on-device.
+</p>
+<p align="center">
+  <a href="https://github.com/itoropitsin/TextWren/releases/latest">Download</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#use">Use</a> ·
+  <a href="LICENSE">MIT License</a>
+</p>
 
-TinyAI is a small macOS app for everyday writing. It translates, fixes grammar, and runs your own
+TextWren is a small macOS app for everyday writing. It translates, fixes grammar, and runs your own
 prompts on any text, either in its own window or right where you are typing.
 
 <p align="center">
-  <img src="docs/popup.png" alt="TinyAI popup over a web page: the selected text translated into Japanese with formatting kept, and a Grammar result, each with Replace" width="420">
+  <img src="docs/popup.png" alt="TextWren popup over a web page: the selected text translated into Japanese with formatting kept, and a Grammar result, each with Replace" width="420">
 </p>
 <p align="center">
-  <img src="docs/main-window.png" alt="TinyAI main window: formatted English source with links, its Japanese translation and the Grammar result" width="720">
+  <img src="docs/main-window.png" alt="TextWren main window: formatted English source with links, its Japanese translation and the Grammar result" width="720">
 </p>
 <p align="center">
   <img src="docs/dictation.png" alt="Dictation popup under the menu bar icon, showing live text while listening" width="420">
@@ -33,15 +46,19 @@ prompts on any text, either in its own window or right where you are typing.
 
 ## Install
 
-1. Download `TinyAI.zip` from the [latest release](https://github.com/itoropitsin/TinyAI/releases/latest)
+1. Download `TextWren.zip` from the [latest release](https://github.com/itoropitsin/TextWren/releases/latest)
    and open it.
-2. Move `TinyAI.app` to **Applications**.
+2. Move `TextWren.app` to **Applications**.
 3. The app is ad hoc signed, not notarized. If macOS blocks the first launch, Control-click
-   `TinyAI.app` and choose **Open**, or use **System Settings → Privacy & Security → Open Anyway**.
+   `TextWren.app` and choose **Open**, or use **System Settings → Privacy & Security → Open Anyway**.
+
+TextWren was called **TinyAI** before version 2.1.0. Updating keeps your settings, API keys and
+downloaded models. After installing `TextWren.app`, delete the old `TinyAI.app`; if Accessibility
+does not work, remove the old entry in System Settings and add `TextWren.app`.
 
 ### Build from source
 
-Open `TinyAI.xcodeproj` in Xcode and run the `TinyAI` scheme. The build phase downloads the pinned
+Open `TinyAI.xcodeproj` in Xcode and run the `TinyAI` scheme (the app target keeps its original name). The build phase downloads the pinned
 transcribe.cpp and llama.cpp frameworks into `Vendor/`. To compile the release app from the command
 line without installing it, run:
 
@@ -60,7 +77,7 @@ Apple Development certificate for team `Y29LYS5D8M`. The script refuses to insta
 that is not newer than the installed one. Bump `MARKETING_VERSION` and
 `CURRENT_PROJECT_VERSION` in Xcode and the matching `version` and `build_number` at the top of the
 script together. Use `--build-only` to compile without installing. For an ad hoc signed
-release archive without a certificate, run `zsh scripts/sign_release_ad_hoc.sh /path/to/TinyAI.app`
+release archive without a certificate, run `zsh scripts/sign_release_ad_hoc.sh /path/to/TextWren.app`
 after building and before creating the ZIP. Ad hoc signatures can change between builds, so macOS
 may require Accessibility to be granted again after an update.
 
@@ -81,9 +98,9 @@ the standard entitlements without this exception.
    saved. To stay fully offline, download the on-device models there instead.
 2. In **Settings → Primary**, choose what the two result panels show: the built-in Translate or
    one of your actions.
-3. When macOS asks, allow **Accessibility** for TinyAI (System Settings → Privacy & Security).
+3. When macOS asks, allow **Accessibility** for TextWren (System Settings → Privacy & Security).
    The popup hotkey, voice shortcuts and Replace need it. If a previously enabled entry does not
-   work after an update, remove it, add `/Applications/TinyAI.app`,
+   work after an update, remove it, add `/Applications/TextWren.app`,
    enable it and relaunch.
 4. For voice features, allow **Microphone** access when asked (or in **Settings → Voice**).
 
@@ -119,18 +136,18 @@ same shortcut). Existing saved shortcuts are preserved. Change the shortcut and 
 | Engine | Model | Good for |
 | --- | --- | --- |
 | Local | [Voxtral Mini 4B Realtime](https://huggingface.co/handy-computer/Voxtral-Mini-4B-Realtime-2602-gguf) | Live text, 13 languages. Examples: English, Mandarin, Hindi, Spanish, Arabic. Model weights need about 2.8 GB RAM, plus runtime memory. |
-| Local | [Nemotron Streaming 3.5](https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf) | Fast live text, 28 languages in TinyAI. Examples: English, Mandarin, Hindi, Spanish, Arabic. Model weights need about 750 MB RAM, plus runtime memory. |
+| Local | [Nemotron Streaming 3.5](https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf) | Fast live text, 28 languages in TextWren. Examples: English, Mandarin, Hindi, Spanish, Arabic. Model weights need about 750 MB RAM, plus runtime memory. |
 | Local | [Canary 180M Flash](https://huggingface.co/handy-computer/canary-180m-flash-gguf) | Small offline model. Its four languages are English, Spanish, French and German. Model weights need about 220 MB RAM, plus runtime memory. |
 | OpenAI | GPT Live Transcribe (default) | Streams while you talk. [OpenAI list price](https://developers.openai.com/api/docs/pricing): $0.017/minute. |
 | OpenAI | GPT Transcribe | Transcribes after recording stops. [OpenAI list price](https://developers.openai.com/api/docs/pricing): $0.0045/minute. |
 
-When a new installation has neither an OpenAI API key nor a downloaded local model, TinyAI offers
+When a new installation has neither an OpenAI API key nor a downloaded local model, TextWren offers
 to download Nemotron for local dictation. Download and RAM figures are approximate; actual memory
 use depends on the runtime and recording length.
 
 Local models are the ones Handy uses, run with transcribe.cpp on the Mac's GPU. Download them in
 **Settings → Voice** or **Settings → API**; each file is checked against a pinned SHA-256 and stored in
-`~/Library/Application Support/TinyAI/Models`. Audio for local models never leaves the Mac.
+`~/Library/Application Support/TinyAI/Models` (the folder keeps the app's original name). Audio for local models never leaves the Mac.
 
 ### Agents (Beta)
 
@@ -189,7 +206,7 @@ Example prompts:
 
 ## Models
 
-TinyAI supports a fixed set of models, each with the reasoning levels its provider accepts.
+TextWren supports a fixed set of models, each with the reasoning levels its provider accepts.
 
 | Provider | Models |
 | --- | --- |
@@ -247,10 +264,10 @@ Model output has em dashes (—) replaced with hyphens (-); code is left unchang
   `MCPClient`, `OAuthBrowserAuthorizer`, `HTTPAgentClient`, and the GPT-Live wire format in
   `LiveProtocol`.
 - HTML handling: `RichTextHTMLParser` and `RichTextHTMLSanitizer` in
-  `TinyAI/RichTextPayload.swift`. TinyAI parses HTML itself instead of using AppKit's importer,
+  `TinyAI/RichTextPayload.swift`. TextWren parses HTML itself instead of using AppKit's importer,
   which crashes on macOS 27 for HTML with links.
 
 ## License
 
-TinyAI is released under the [MIT License](LICENSE). The bundled transcribe.cpp and llama.cpp
+TextWren is released under the [MIT License](LICENSE). The bundled transcribe.cpp and llama.cpp
 frameworks and the downloaded models keep their own licenses.

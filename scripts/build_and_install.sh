@@ -8,10 +8,16 @@ if [[ -z "${DEVELOPER_DIR:-}" && -d /Applications/Xcode.app/Contents/Developer ]
 fi
 
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
-build_root="$(mktemp -d /tmp/TinyAI-build.XXXXXX)"
-app_bundle="$build_root/TinyAI.app"
-version="2.0.8"
-build_number="103"
+build_root="$(mktemp -d /tmp/TextWren-build.XXXXXX)"
+# The app was called TinyAI before 2.1.0. The bundle ID, Keychain service and
+# model folder keep that name so settings, keys and permissions carry over.
+app_name="TextWren"
+legacy_app_name="TinyAI"
+installed_app="/Applications/$app_name.app"
+legacy_app="/Applications/$legacy_app_name.app"
+app_bundle="$build_root/$app_name.app"
+version="2.1.0"
+build_number="104"
 project_file="$project_root/TinyAI.xcodeproj/project.pbxproj"
 sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
 build_only="${1:-}"
@@ -161,7 +167,7 @@ ditto "$transcribe_framework_dir/CTranscribe.framework" "$app_bundle/Contents/Fr
 llama_framework_dir="$project_root/Vendor/llama.xcframework/macos-arm64_x86_64"
 ditto "$llama_framework_dir/llama.framework" "$app_bundle/Contents/Frameworks/llama.framework"
 
-echo "Building TinyAI $version ($build_number)…"
+echo "Building $app_name $version ($build_number)…"
 swiftc \
   -target arm64-apple-macosx14.6 \
   -sdk "$sdk_path" \
@@ -173,7 +179,7 @@ swiftc \
   -enable-upcoming-feature MemberImportVisibility \
   -module-name TinyAI \
   -O \
-  -o "$app_bundle/Contents/MacOS/TinyAI" \
+  -o "$app_bundle/Contents/MacOS/$app_name" \
   "$project_root"/TinyAI/*.swift \
   -F "$transcribe_framework_dir" \
   -framework CTranscribe \
@@ -201,8 +207,8 @@ iconutil --convert icns --output "$app_bundle/Contents/Resources/AppIcon.icns" "
 
 cp "$project_root/TinyAI/Info.plist" "$app_bundle/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier IT.TinyAI" "$app_bundle/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable TinyAI" "$app_bundle/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleName TinyAI" "$app_bundle/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $app_name" "$app_bundle/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName $app_name" "$app_bundle/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundlePackageType APPL" "$app_bundle/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIconName AppIcon" "$app_bundle/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$app_bundle/Contents/Info.plist"
@@ -232,14 +238,14 @@ else
 fi
 
 echo "Checking the built app…"
-test -x "$app_bundle/Contents/MacOS/TinyAI"
+test -x "$app_bundle/Contents/MacOS/$app_name"
 test -f "$app_bundle/Contents/Frameworks/CTranscribe.framework/Versions/A/CTranscribe"
 test -f "$app_bundle/Contents/Frameworks/llama.framework/Versions/A/llama"
 test -s "$app_bundle/Contents/Resources/AppIcon.icns"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_bundle/Contents/Info.plist")" = "$version"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_bundle/Contents/Info.plist")" = "$build_number"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_bundle/Contents/Info.plist")" = "IT.TinyAI"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app_bundle/Contents/Info.plist")" = "TinyAI"
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app_bundle/Contents/Info.plist")" = "$app_name"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "$app_bundle/Contents/Info.plist")" = "APPL"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app_bundle/Contents/Info.plist")" = "AppIcon"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$app_bundle/Contents/Info.plist")" = "AppIcon"
@@ -255,46 +261,58 @@ fi
 # Copy into a temporary directory under /Applications and verify that copy
 # before touching the installed bundle.  A failed copy or signature check
 # therefore leaves the currently installed version in place.
-install_stage_root="$(mktemp -d /Applications/.TinyAI-install.XXXXXX)"
-install_stage_app="$install_stage_root/TinyAI.app"
+install_stage_root="$(mktemp -d /Applications/.TextWren-install.XXXXXX)"
+install_stage_app="$install_stage_root/$app_name.app"
 ditto "$app_bundle" "$install_stage_app"
 verify_signature "$install_stage_app"
-test -x "$install_stage_app/Contents/MacOS/TinyAI"
+test -x "$install_stage_app/Contents/MacOS/$app_name"
 test -s "$install_stage_app/Contents/Resources/AppIcon.icns"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$install_stage_app/Contents/Info.plist")" = "$version"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$install_stage_app/Contents/Info.plist")" = "$build_number"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$install_stage_app/Contents/Info.plist")" = "IT.TinyAI"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$install_stage_app/Contents/Info.plist")" = "TinyAI"
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$install_stage_app/Contents/Info.plist")" = "$app_name"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "$install_stage_app/Contents/Info.plist")" = "APPL"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$install_stage_app/Contents/Info.plist")" = "AppIcon"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$install_stage_app/Contents/Info.plist")" = "AppIcon"
 
 # Never replace an equal or newer installed release. This check is made only
 # for a real install; --build-only remains safe for local build verification.
-if [[ -d /Applications/TinyAI.app ]]; then
-  installed_version_before="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/TinyAI.app/Contents/Info.plist 2>/dev/null || true)"
-  installed_build_before="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' /Applications/TinyAI.app/Contents/Info.plist 2>/dev/null || true)"
+# The previous install is TextWren.app, or TinyAI.app from before the rename.
+previous_app=""
+if [[ -d "$installed_app" ]]; then
+  previous_app="$installed_app"
+elif [[ -d "$legacy_app" ]]; then
+  previous_app="$legacy_app"
+fi
+if [[ -n "$previous_app" ]]; then
+  installed_version_before="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$previous_app/Contents/Info.plist" 2>/dev/null || true)"
+  installed_build_before="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$previous_app/Contents/Info.plist" 2>/dev/null || true)"
   if [[ -z "$installed_version_before" || -z "$installed_build_before" ]]; then
-    echo "Could not read the version of the installed TinyAI; replacement cancelled." >&2
+    echo "Could not read the version of $previous_app; replacement cancelled." >&2
     exit 1
   fi
   release_comparison="$(compare_releases "$version" "$build_number" "$installed_version_before" "$installed_build_before")" || {
-    echo "The installed TinyAI has an invalid version ($installed_version_before/$installed_build_before); replacement cancelled." >&2
+    echo "$previous_app has an invalid version ($installed_version_before/$installed_build_before); replacement cancelled." >&2
     exit 1
   }
   if [[ "$release_comparison" -le 0 ]]; then
-    echo "Install cancelled: TinyAI $installed_version_before ($installed_build_before) is already installed or newer." >&2
+    echo "Install cancelled: version $installed_version_before ($installed_build_before) is already installed or newer." >&2
     exit 1
   fi
 fi
+
+# Either name may be running: TextWren, or TinyAI before the rename.
+running_app_pid() {
+  pgrep -x "$app_name|$legacy_app_name" | head -n 1
+}
 
 # Ask the running app to quit before moving its bundle. If it does not leave
 # in time, keep /Applications untouched so a live process cannot execute from
 # a half-replaced package.
-wait_for_tinyai_exit() {
+wait_for_app_exit() {
   local timeout_seconds="$1"
   local deadline=$((SECONDS + timeout_seconds))
-  while pgrep -x TinyAI >/dev/null 2>&1; do
+  while [[ -n "$(running_app_pid)" ]]; do
     if (( SECONDS >= deadline )); then
       return 1
     fi
@@ -303,73 +321,89 @@ wait_for_tinyai_exit() {
   return 0
 }
 
-if pgrep -x TinyAI >/dev/null 2>&1; then
-  echo "Quitting the running TinyAI before replacing it…"
-  osascript -e 'tell application "TinyAI" to quit' >/dev/null 2>&1 || true
-  if ! wait_for_tinyai_exit 8; then
+if [[ -n "$(running_app_pid)" ]]; then
+  echo "Quitting the running app before replacing it…"
+  osascript -e 'tell application id "IT.TinyAI" to quit' >/dev/null 2>&1 || true
+  if ! wait_for_app_exit 8; then
     # A menu-bar app can ignore the Apple event while its Settings window is
     # open. Send a normal termination signal only to the process executing
     # the installed bundle, then wait again. Never use SIGKILL here.
-    running_pid="$(pgrep -x TinyAI | head -n 1)"
+    running_pid="$(running_app_pid)"
     running_executable="$(lsof -p "$running_pid" -a -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
-    if [[ "$running_executable" != "/Applications/TinyAI.app/Contents/MacOS/TinyAI" ]]; then
-      echo "Unknown TinyAI process ($running_pid); the current install is kept." >&2
+    if [[ "$running_executable" != "$installed_app/Contents/MacOS/$app_name" \
+       && "$running_executable" != "$legacy_app/Contents/MacOS/$legacy_app_name" ]]; then
+      echo "Unknown app process ($running_pid); the current install is kept." >&2
       exit 1
     fi
-    echo "Sending TinyAI SIGTERM…"
+    echo "Sending SIGTERM to $running_pid…"
     kill -TERM "$running_pid"
-    if ! wait_for_tinyai_exit 5; then
-      echo "TinyAI did not quit in time; the current install is kept." >&2
+    if ! wait_for_app_exit 5; then
+      echo "The app did not quit in time; the current install is kept." >&2
       exit 1
     fi
   fi
 fi
 
-if [[ -d /Applications/TinyAI.app ]]; then
-  backup_root="$(mktemp -d /tmp/TinyAI.previous.XXXXXX)"
+backup_app=""
+if [[ -n "$previous_app" ]]; then
+  backup_root="$(mktemp -d /tmp/TextWren.previous.XXXXXX)"
+  backup_app="$backup_root/$(basename "$previous_app")"
   # Move the old bundle out of the destination before copying.  `ditto` into
   # an existing app would leave stale sealed resources behind and invalidate
   # the new code signature.
-  mv /Applications/TinyAI.app "$backup_root/TinyAI.app"
-  echo "Backup of the previous version: $backup_root/TinyAI.app"
+  mv "$previous_app" "$backup_app"
+  echo "Backup of the previous version: $backup_app"
+fi
+# A TinyAI.app left next to TextWren.app would be a second copy with the same
+# bundle ID; keep it with the backup instead.
+if [[ -d "$legacy_app" && "$previous_app" != "$legacy_app" ]]; then
+  [[ -n "$backup_root" ]] || backup_root="$(mktemp -d /tmp/TextWren.previous.XXXXXX)"
+  mv "$legacy_app" "$backup_root/$legacy_app_name.app"
 fi
 
-if ! mv "$install_stage_app" /Applications/TinyAI.app; then
-  if [[ -n "$backup_root" && -d "$backup_root/TinyAI.app" && ! -e /Applications/TinyAI.app ]]; then
-    mv "$backup_root/TinyAI.app" /Applications/TinyAI.app
-    echo "Could not replace the app; the backup was restored." >&2
+restore_previous_install() {
+  if [[ -z "$backup_app" || ! -d "$backup_app" ]]; then
+    return 0
   fi
+  if [[ -d "$installed_app" ]]; then
+    mv "$installed_app" "$install_stage_root/$app_name.failed.app" || return 1
+  fi
+  mv "$backup_app" "$previous_app" || return 1
+  echo "The previous version was restored: $previous_app" >&2
+  open -a "$previous_app" || true
+}
+
+if ! mv "$install_stage_app" "$installed_app"; then
+  restore_previous_install
+  echo "Could not install the app; the backup was restored." >&2
   exit 1
 fi
 validate_installed_app() {
-  verify_signature /Applications/TinyAI.app || return 1
-  test -x /Applications/TinyAI.app/Contents/MacOS/TinyAI || return 1
-  test -s /Applications/TinyAI.app/Contents/Resources/AppIcon.icns || return 1
-  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' /Applications/TinyAI.app/Contents/Info.plist)" = "IT.TinyAI" || return 1
-  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' /Applications/TinyAI.app/Contents/Info.plist)" = "TinyAI" || return 1
-  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' /Applications/TinyAI.app/Contents/Info.plist)" = "APPL" || return 1
-  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' /Applications/TinyAI.app/Contents/Info.plist)" = "AppIcon" || return 1
-  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' /Applications/TinyAI.app/Contents/Info.plist)" = "AppIcon" || return 1
+  verify_signature "$installed_app" || return 1
+  test -x "$installed_app/Contents/MacOS/$app_name" || return 1
+  test -s "$installed_app/Contents/Resources/AppIcon.icns" || return 1
+  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$installed_app/Contents/Info.plist")" = "IT.TinyAI" || return 1
+  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$installed_app/Contents/Info.plist")" = "$app_name" || return 1
+  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundlePackageType' "$installed_app/Contents/Info.plist")" = "APPL" || return 1
+  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$installed_app/Contents/Info.plist")" = "AppIcon" || return 1
+  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$installed_app/Contents/Info.plist")" = "AppIcon" || return 1
 }
 if ! validate_installed_app; then
   echo "The new install failed its check; restoring the previous version." >&2
-  mv /Applications/TinyAI.app "$install_stage_root/TinyAI.failed.app"
-  if [[ -n "$backup_root" && -d "$backup_root/TinyAI.app" ]]; then
-    mv "$backup_root/TinyAI.app" /Applications/TinyAI.app
-  fi
+  restore_previous_install
   exit 1
 fi
 
-echo "Installed: /Applications/TinyAI.app"
-installed_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/TinyAI.app/Contents/Info.plist)"
-installed_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' /Applications/TinyAI.app/Contents/Info.plist)"
+echo "Installed: $installed_app"
+installed_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$installed_app/Contents/Info.plist")"
+installed_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$installed_app/Contents/Info.plist")"
 echo "Version: $installed_version ($installed_build)"
-open -a /Applications/TinyAI.app
+open -a "$installed_app"
 
-wait_for_tinyai_start() {
+wait_for_app_start() {
   local timeout_seconds="$1"
   local deadline=$((SECONDS + timeout_seconds))
-  while ! pgrep -x TinyAI >/dev/null 2>&1; do
+  while ! pgrep -x "$app_name" >/dev/null 2>&1; do
     if (( SECONDS >= deadline )); then
       return 1
     fi
@@ -378,38 +412,26 @@ wait_for_tinyai_start() {
   return 0
 }
 
-restore_previous_install() {
-  if [[ -z "$backup_root" || ! -d "$backup_root/TinyAI.app" ]]; then
-    return 0
-  fi
-  if [[ -d /Applications/TinyAI.app ]]; then
-    mv /Applications/TinyAI.app "$install_stage_root/TinyAI.failed.app" || return 1
-  fi
-  mv "$backup_root/TinyAI.app" /Applications/TinyAI.app || return 1
-  echo "The previous TinyAI version was restored: /Applications/TinyAI.app" >&2
-  open -a /Applications/TinyAI.app || true
-}
-
-if ! wait_for_tinyai_start 8; then
+if ! wait_for_app_start 8; then
   echo "The new build did not start; restoring the previous version." >&2
   restore_previous_install
   exit 1
 fi
 
-tinyai_pid="$(pgrep -x TinyAI | head -n 1)"
+app_pid="$(pgrep -x "$app_name" | head -n 1)"
 sleep 3
-if ! kill -0 "$tinyai_pid" 2>/dev/null; then
-  echo "TinyAI quit right after launch; restoring the previous version." >&2
+if ! kill -0 "$app_pid" 2>/dev/null; then
+  echo "$app_name quit right after launch; restoring the previous version." >&2
   restore_previous_install
   exit 1
 fi
-tinyai_executable="$(lsof -p "$tinyai_pid" -a -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
-if [[ "$tinyai_executable" != "/Applications/TinyAI.app/Contents/MacOS/TinyAI" ]]; then
-  echo "The running TinyAI is not the new bundle: ${tinyai_executable:-unknown path}. Restoring the previous version." >&2
+app_executable="$(lsof -p "$app_pid" -a -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+if [[ "$app_executable" != "$installed_app/Contents/MacOS/$app_name" ]]; then
+  echo "The running $app_name is not the new bundle: ${app_executable:-unknown path}. Restoring the previous version." >&2
   restore_previous_install
   exit 1
 fi
-echo "Running process: PID $tinyai_pid, $tinyai_executable"
+echo "Running process: PID $app_pid, $app_executable"
 if [[ -n "$backup_root" && -d "$backup_root" ]]; then
   # Keep the previous version until the newly signed app has launched from
   # /Applications; a startup failure then leaves a recoverable copy.

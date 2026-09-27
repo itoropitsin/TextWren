@@ -432,7 +432,7 @@ class KeyboardMonitor: ObservableObject {
             return "Esc cancels voice sessions and can’t be a shortcut."
         }
         if shortcut == popupHotkey {
-            return "This shortcut already opens the TinyAI popup."
+            return "This shortcut already opens the TextWren popup."
         }
         let reservedDigitKeyCodes: Set<Int64> = [18, 19, 20, 21, 22, 23, 25, 26, 28, 29]
         if modifiers == [.command] && reservedDigitKeyCodes.contains(shortcut.keyCode) {

@@ -430,7 +430,7 @@ struct MCPProtocolTests {
         #expect(request["id"] as? Int == 7)
         let params = MCPMessages.initializeParams()
         #expect(params["protocolVersion"] as? String == MCPMessages.protocolVersion)
-        #expect((params["clientInfo"] as? [String: Any])?["name"] as? String == "TinyAI")
+        #expect((params["clientInfo"] as? [String: Any])?["name"] as? String == "TextWren")
         #expect(MCPMessages.notification(method: "notifications/initialized")["id"] == nil)
     }
 

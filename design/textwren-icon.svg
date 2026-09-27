@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- TextWren app icon, "Ocean": an origami wren on a deep blue tile.
+       The 824 px tile follows the macOS icon grid; export with
+       scripts/export_app_icon.sh. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1A4FA0"/>
+      <stop offset="1" stop-color="#0A1C45"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".55" cy=".45" r=".55">
+      <stop offset="0" stop-color="#3FA9FF" stop-opacity=".35"/>
+      <stop offset="1" stop-color="#3FA9FF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".16"/>
+      <stop offset=".45" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000" flood-opacity=".28"/>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+  </g>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#glow)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#sheen)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="184" fill="none" stroke="#FFFFFF" stroke-opacity=".08" stroke-width="3"/>
+  <g transform="translate(496 552) scale(1.52)" stroke="#1558AE" stroke-width="1.2" stroke-linejoin="round">
+    <polygon points="30,-128 118,-178 170,-120" fill="#E3F4FF"/>
+    <polygon points="30,-128 170,-120 150,-44" fill="#B9E3FF"/>
+    <polygon points="168,-126 272,-104 166,-96" fill="#FFD24A"/>
+    <polygon points="30,-128 -112,-44 150,-44" fill="#86CCFF"/>
+    <polygon points="150,-44 112,118 -112,-44" fill="#56B2FF"/>
+    <polygon points="-112,-44 112,118 -56,152" fill="#1C74D6"/>
+    <polygon points="-104,-36 92,8 -158,66" fill="#B9E3FF"/>
+    <polygon points="-112,-44 -212,-156 -150,-186" fill="#2D93F2"/>
+    <polygon points="-112,-44 -150,-186 -52,-96" fill="#1558AE"/>
+    <polygon points="58,-150 158,-140 62,-138" fill="#E3F4FF"/>
+    <circle cx="118" cy="-118" r="13" fill="#0A1C45" stroke="none"/>
+  </g>
+</svg>

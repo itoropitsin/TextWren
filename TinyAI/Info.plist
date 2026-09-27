@@ -9,7 +9,7 @@
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleName</key>
-    <string>TinyAI</string>
+    <string>TextWren</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIconName</key>
@@ -27,6 +27,6 @@
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>TinyAI records your voice while you hold a voice shortcut, to transcribe it or send it to your agents.</string>
+    <string>TextWren records your voice while you hold a voice shortcut, to transcribe it or send it to your agents.</string>
 </dict>
 </plist>

@@ -57,6 +57,55 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
+    /// At rest the menu bar shows the TextWren mark; active states keep
+    /// their symbols so recording and errors stay easy to spot.
+    static func showsWren(for state: VoiceState) -> Bool {
+        switch state {
+        case .idle, .live(.ended): return true
+        default: return false
+        }
+    }
+
+    /// The origami wren from the app icon as a template image, drawn from
+    /// code so it stays sharp at every scale and needs no asset catalog
+    /// (the installer builds with swiftc, which does not compile one).
+    static let wrenTemplateImage: NSImage = {
+        // Facets in the icon's coordinates (y grows downwards).
+        let facets: [[CGPoint]] = [
+            [(30, -128), (118, -178), (170, -120)],
+            [(30, -128), (170, -120), (150, -44)],
+            [(168, -126), (272, -104), (166, -96)],
+            [(30, -128), (-112, -44), (150, -44)],
+            [(150, -44), (112, 118), (-112, -44)],
+            [(-112, -44), (112, 118), (-56, 152)],
+            [(-104, -36), (92, 8), (-158, 66)],
+            [(-112, -44), (-212, -156), (-150, -186)],
+            [(-112, -44), (-150, -186), (-52, -96)],
+        ].map { $0.map { CGPoint(x: $0.0, y: $0.1) } }
+        let bounds = CGRect(x: -222, y: -196, width: 504, height: 358)
+        let size = NSSize(width: 22, height: 16)
+        let image = NSImage(size: size, flipped: true) { rect in
+            let scale = min(rect.width / bounds.width, rect.height / bounds.height)
+            let offset = CGPoint(x: (rect.width - bounds.width * scale) / 2,
+                                 y: (rect.height - bounds.height * scale) / 2)
+            NSColor.black.setFill()
+            for facet in facets {
+                let path = NSBezierPath()
+                for (index, point) in facet.enumerated() {
+                    let mapped = CGPoint(x: offset.x + (point.x - bounds.minX) * scale,
+                                         y: offset.y + (point.y - bounds.minY) * scale)
+                    index == 0 ? path.move(to: mapped) : path.line(to: mapped)
+                }
+                path.close()
+                path.fill()
+            }
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "TextWren"
+        return image
+    }()
+
     static func statusText(for state: VoiceState) -> String {
         switch state {
         case .idle: return "Ready"
@@ -80,7 +129,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func render(_ state: VoiceState) {
         guard let button = statusItem.button else { return }
         let symbol = Self.symbolName(for: state)
-        var image = NSImage(systemSymbolName: symbol, accessibilityDescription: Self.statusText(for: state))
+        var image = Self.showsWren(for: state)
+            ? Self.wrenTemplateImage
+            : NSImage(systemSymbolName: symbol, accessibilityDescription: Self.statusText(for: state))
         let tint: NSColor?
         switch state {
         case .recording: tint = .systemRed
@@ -96,7 +147,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             image?.isTemplate = true
         }
         button.image = image
-        button.toolTip = "TinyAI — \(Self.statusText(for: state))"
+        button.toolTip = "TextWren — \(Self.statusText(for: state))"
 
         let shouldPulse: Bool
         if case .recording = state { shouldPulse = true } else { shouldPulse = false }
@@ -190,10 +241,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(engine)
         menu.addItem(.separator())
 
-        menu.addItem(actionItem("Open TinyAI", #selector(openMain)))
+        menu.addItem(actionItem("Open TextWren", #selector(openMain)))
         menu.addItem(actionItem("Settings…", #selector(openSettingsWindow)))
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit TinyAI", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit TextWren", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
     }
 

@@ -1,9 +1,14 @@
 # AGENTS.md
 
-Notes for AI coding agents (and people) working on TinyAI. The user-facing documentation is in
+Notes for AI coding agents (and people) working on TextWren (called TinyAI before 2.1.0). The user-facing documentation is in
 [README.md](README.md). This file covers how to build, test and change the code safely.
 
 ## Project at a glance
+
+- **Naming.** Users see **TextWren**. Internal names keep **TinyAI**, so existing installs keep
+  their settings, Keychain items, permissions and models: the Xcode target, schemes and Swift
+  module, the `TinyAI/` folders, bundle ID `IT.TinyAI`, the Keychain service, the log subsystem,
+  and `~/Library/Application Support/TinyAI`. Do not rename them without a migration.
 
 - A native macOS app in SwiftUI and AppKit, for macOS 14.6+. The project uses Swift 5 language
   mode with Xcode 27.
@@ -100,9 +105,9 @@ zsh scripts/test_build_and_install.sh
 1. Bump the version in both places (see above). Merge to `main` after CI passes.
 2. Build the Release configuration with Xcode, ad hoc signed:
    `CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM=`.
-3. Sign the bundle with `zsh scripts/sign_release_ad_hoc.sh /path/to/TinyAI.app`.
-4. Package the zip: `ditto -c -k --sequesterRsrc --keepParent TinyAI.app TinyAI.zip`.
-5. Write the checksum: `shasum -a 256 TinyAI.zip > SHA256SUMS.txt`.
+3. Sign the bundle with `zsh scripts/sign_release_ad_hoc.sh /path/to/TextWren.app`.
+4. Package the zip: `ditto -c -k --sequesterRsrc --keepParent TextWren.app TextWren.zip`.
+5. Write the checksum: `shasum -a 256 TextWren.zip > SHA256SUMS.txt`.
 6. Create a GitHub release `vX.Y.Z` on the merge commit, with both files attached.
 
 The `TinyAI Local Code Signing` certificate used by `build_and_install.sh` works only on the

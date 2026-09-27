@@ -71,7 +71,7 @@ enum AudioCaptureError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .microphoneDenied:
-            return "TinyAI has no access to the microphone. Allow it in System Settings → Privacy & Security → Microphone."
+            return "TextWren has no access to the microphone. Allow it in System Settings → Privacy & Security → Microphone."
         case .noInputDevice:
             return "No microphone is available."
         case .converterUnavailable:
