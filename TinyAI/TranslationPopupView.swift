@@ -801,11 +801,19 @@ struct TranslationPopupView: View {
             return
         }
 
+        // The popup is a non-activating panel that is also the key window, so
+        // a synthetic ⌘V would land in the popup itself. Hide it first so
+        // keyboard focus returns to the source application's window.
+        let popupWindow = NSApp.keyWindow as? DraggableWindow
+        popupWindow?.orderOut(nil)
+
         TextInserter.insert(payload, into: target, restoreClipboard: false) { result in
             switch result {
             case .success:
                 self.onClose?()
             case .failure(let error):
+                popupWindow?.orderFrontRegardless()
+                popupWindow?.makeKey()
                 self.translationService.errorMessage = error.errorDescription
             }
         }

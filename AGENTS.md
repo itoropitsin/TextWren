@@ -47,6 +47,12 @@ zsh scripts/test_build_and_install.sh
 
 ## Rules that are easy to break
 
+- **Bump the build number before installing a change.** `build_and_install.sh` refuses to replace
+  an installed app of the same or newer version ("Install cancelled: … already installed or
+  newer"). Raise the build number in both places so they stay equal: `build_number` in
+  `scripts/build_and_install.sh` and every `CURRENT_PROJECT_VERSION` in
+  `TinyAI.xcodeproj/project.pbxproj`. Change `version` / `MARKETING_VERSION` only for a release.
+
 - **New Swift files must be added to `TinyAI.xcodeproj`.** The project uses explicit file
   references, not synchronized folders. `build_and_install.sh` compiles `TinyAI/*.swift` with
   `swiftc`, so a file missing from the project still builds there but fails in Xcode and CI.
