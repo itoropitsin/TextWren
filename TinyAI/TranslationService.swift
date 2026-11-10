@@ -1200,7 +1200,33 @@ Rules:
     }
 
     @discardableResult
-    private func performOpenAIChatCompletion(apiKey: String, requestBody: [String: Any], completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
+    /// Starts a request and repeats it once when the connection drops before
+    /// a response arrives.  URLSession reuses pooled connections, and one the
+    /// server already closed after idling fails with `networkConnectionLost`.
+    private func startDataTask(
+        with request: URLRequest,
+        completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void
+    ) -> CancellableRequest {
+        let handle = RetryingDataTask()
+        func start(attempt: Int) {
+            let task = session.dataTask(with: request) { data, response, error in
+                if attempt == 0, (error as? URLError)?.code == .networkConnectionLost {
+                    Task { @MainActor in
+                        guard !handle.isCancelled else { return }
+                        start(attempt: attempt + 1)
+                    }
+                    return
+                }
+                completionHandler(data, response, error)
+            }
+            handle.current = task
+            task.resume()
+        }
+        start(attempt: 0)
+        return handle
+    }
+
+    private func performOpenAIChatCompletion(apiKey: String, requestBody: [String: Any], completion: @escaping (Result<String, Error>) -> Void) -> CancellableRequest? {
         guard !apiKey.isEmpty else {
             completion(.failure(TranslationError.apiKeyMissing))
             return nil
@@ -1229,7 +1255,7 @@ Rules:
             return nil
         }
 
-        let task = session.dataTask(with: request) { [weak self] data, response, error in
+        return startDataTask(with: request) { [weak self] data, response, error in
             let statusCode = (response as? HTTPURLResponse)?.statusCode
 
             Task { @MainActor [weak self] in
@@ -1270,12 +1296,10 @@ Rules:
                 }
             }
         }
-        task.resume()
-        return task
     }
 
     @discardableResult
-    private func performOpenAIResponses(apiKey: String, requestBody: [String: Any], completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
+    private func performOpenAIResponses(apiKey: String, requestBody: [String: Any], completion: @escaping (Result<String, Error>) -> Void) -> CancellableRequest? {
         guard !apiKey.isEmpty else {
             completion(.failure(TranslationError.apiKeyMissing))
             return nil
@@ -1298,7 +1322,7 @@ Rules:
             return nil
         }
 
-        let task = session.dataTask(with: request) { [weak self] data, response, error in
+        return startDataTask(with: request) { [weak self] data, response, error in
             let statusCode = (response as? HTTPURLResponse)?.statusCode
 
             Task { @MainActor [weak self] in
@@ -1344,8 +1368,6 @@ Rules:
                 }
             }
         }
-        task.resume()
-        return task
     }
 
     private struct GeminiGenerateContentResponse: Decodable {
@@ -1363,7 +1385,7 @@ Rules:
     }
 
     @discardableResult
-    private func performGeminiGenerateContent(apiKey: String, model: LLMModel, systemPrompt: String, userText: String, temperature: Double?, completion: @escaping (Result<String, Error>) -> Void) -> URLSessionDataTask? {
+    private func performGeminiGenerateContent(apiKey: String, model: LLMModel, systemPrompt: String, userText: String, temperature: Double?, completion: @escaping (Result<String, Error>) -> Void) -> CancellableRequest? {
         guard !apiKey.isEmpty else {
             completion(.failure(TranslationError.apiKeyMissing))
             return nil
@@ -1410,7 +1432,7 @@ Rules:
             return nil
         }
 
-        let task = session.dataTask(with: request) { [weak self] data, response, error in
+        return startDataTask(with: request) { [weak self] data, response, error in
             let statusCode = (response as? HTTPURLResponse)?.statusCode
 
             Task { @MainActor [weak self] in
@@ -1455,8 +1477,6 @@ Rules:
                 }
             }
         }
-        task.resume()
-        return task
     }
 
     @discardableResult
@@ -1991,5 +2011,17 @@ enum LLMRequestPolicy {
         guard name.hasPrefix(prefix) else { return nil }
         let digits = name.dropFirst(prefix.count).prefix(while: \.isNumber)
         return Int(digits)
+    }
+}
+
+/// The request handed to callers by `startDataTask`; cancelling it stops
+/// whichever attempt is running.
+final class RetryingDataTask: CancellableRequest {
+    fileprivate var current: URLSessionDataTask?
+    private(set) var isCancelled = false
+
+    func cancel() {
+        isCancelled = true
+        current?.cancel()
     }
 }
